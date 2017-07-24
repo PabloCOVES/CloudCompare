@@ -1,0 +1,5 @@
+<RCC>
+  <qresource prefix="/CC/plugin/qPotassePlugin" >
+    <file>icon.png</file>
+  </qresource>
+</RCC>
