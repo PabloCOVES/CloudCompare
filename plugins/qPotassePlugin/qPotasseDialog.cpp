@@ -5,132 +5,79 @@
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QGroupBox>
-#include <QHBoxLayout>
 #include <QSpinBox>
 #include <QVBoxLayout>
 
-QPotasseDialog::QPotasseDialog(QWidget *parent)
-  : QDialog{parent}
-  , neighborsDistance_{new QDoubleSpinBox{}}
-  , graphCellSize_{new QDoubleSpinBox{}}
-  , graphCellCardinal_{new QSpinBox{}}
-  , treeCellSize_{new QDoubleSpinBox{}}
-  , treeCellCardinal_{new QSpinBox{}}
-  , cone_{new QCheckBox{"Cone"}}
-  , cylinder_{new QCheckBox{"Cylinder"}}
-  , plane_{new QCheckBox{"Plane"}}
-  , sphere_{new QCheckBox{"Sphere"}}
-  , torus_{new QCheckBox{"Torus"}}
-{
-  //////////////////////////////////////////////////////////////////////////////////////////
-  neighborsDistance_->setSuffix("mm");
-  neighborsDistance_->setValue(.5);
-  neighborsDistance_->setMinimum(.01);
-  neighborsDistance_->setMaximum(5);
+qPotasseDialog::qPotasseDialog(QWidget *parent)
+    : QDialog(parent),
+      neighborsDistance_{new QDoubleSpinBox{}},
+      cellSize_{new QDoubleSpinBox{}},
+      cellCardinal_{new QSpinBox{}},
+      planeCheckBox_{new QCheckBox{"Plane"}},
+      sphereCheckBox_{new QCheckBox{"Sphere"}} {
+    // Normals
+    neighborsDistance_->setValue(.5);
+    neighborsDistance_->setMinimum(.1);
+    neighborsDistance_->setMaximum(2);
+    neighborsDistance_->setSuffix("mm");
 
-  graphCellSize_->setSuffix("mm");
-  graphCellSize_->setValue(8);
-  graphCellSize_->setMinimum(1);
+    QFormLayout *normalsLayout{new QFormLayout{}};
+    normalsLayout->addRow("Neighbors distance", neighborsDistance_);
 
-  graphCellCardinal_->setSuffix("pts");
-  graphCellCardinal_->setValue(50);
-  graphCellCardinal_->setMinimum(1);
+    QGroupBox *normalsGroupBox{new QGroupBox{"Normals"}};
+    normalsGroupBox->setLayout(normalsLayout);
 
-  treeCellSize_->setSuffix("mm");
-  treeCellSize_->setValue(1);
-  treeCellSize_->setMinimum(1);
+    // Tree
+    cellSize_->setMaximum(15);
+    cellSize_->setMinimum(1);
+    cellSize_->setValue(8);
+    cellSize_->setSuffix("mm");
 
-  treeCellCardinal_->setSuffix("pts");
-  treeCellCardinal_->setValue(1);
-  treeCellCardinal_->setMinimum(1);
+    cellCardinal_->setMinimum(50);
+    cellCardinal_->setMaximum(1e5);
+    cellCardinal_->setValue(500);
+    cellCardinal_->setSuffix("pts");
 
-  QFormLayout *normalFormLayout{new QFormLayout{}},
-              *graphFormLayout{new QFormLayout{}},
-              *treeFormLayout{new QFormLayout{}};
+    QFormLayout *treeFormLayout{new QFormLayout{}};
+    treeFormLayout->addRow("Cell size", cellSize_);
+    treeFormLayout->addRow("Cell cardinal", cellCardinal_);
 
-  normalFormLayout->addRow("Neighbors", neighborsDistance_);
+    QGroupBox *treeGroupBox{new QGroupBox{"Tree"}};
+    treeGroupBox->setLayout(treeFormLayout);
 
-  graphFormLayout->addRow("Graph cell size", graphCellSize_);
-  graphFormLayout->addRow("Graph cell cardinal", graphCellCardinal_);
+    // Shapes
+    planeCheckBox_->setChecked(true);
+    sphereCheckBox_->setChecked(true);
 
-  treeFormLayout->addRow("Tree cell size", treeCellSize_);
-  treeFormLayout->addRow("Tree cell cardinal", treeCellCardinal_);
+    QVBoxLayout *shapesVBoxLayout{new QVBoxLayout{}};
+    shapesVBoxLayout->addWidget(planeCheckBox_);
+    shapesVBoxLayout->addWidget(sphereCheckBox_);
 
-  QGroupBox *normalsGroupBox{new QGroupBox{"Normals"}},
-            *graphGroupBox{new QGroupBox{"Graph"}},
-            *treeGroupBox{new QGroupBox{"Tree"}};
+    QGroupBox *shapesGroupBox{new QGroupBox{"Shapes"}};
+    shapesGroupBox->setLayout(shapesVBoxLayout);
 
-  normalsGroupBox->setLayout(normalFormLayout);
-  graphGroupBox->setLayout(graphFormLayout);
-  treeGroupBox->setLayout(treeFormLayout);
+    // Buttons
+    QDialogButtonBox *buttonBox{
+        new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel)};
+    connect(buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
+    connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
-  QHBoxLayout *graphTreeLayout{new QHBoxLayout{}};
-  graphTreeLayout->addWidget(graphGroupBox);
-  graphTreeLayout->addWidget(treeGroupBox);
-  //////////////////////////////////////////////////////////////////////////////////////////
+    QVBoxLayout *dialogLayout{new QVBoxLayout{}};
+    dialogLayout->addWidget(normalsGroupBox);
+    dialogLayout->addWidget(treeGroupBox);
+    dialogLayout->addWidget(shapesGroupBox);
+    dialogLayout->addWidget(buttonBox);
 
-  //////////////////////////////////////////////////////////////////////////////////////////
-  cone_->setChecked(true);
-  cylinder_->setChecked(false);
-  plane_->setChecked(true);
-  sphere_->setChecked(true);
-  torus_->setChecked(false);
-
-  QVBoxLayout *shapesLayout{new QVBoxLayout{}};
-  shapesLayout->addWidget(plane_);
-  shapesLayout->addWidget(cone_);
-  shapesLayout->addWidget(sphere_);
-  shapesLayout->addWidget(cylinder_);
-  shapesLayout->addWidget(torus_);
-
-  QGroupBox *shapesGroupBox{new QGroupBox{"Shapes"}};
-  shapesGroupBox->setLayout(shapesLayout);
-  //////////////////////////////////////////////////////////////////////////////////////////
-
-  //////////////////////////////////////////////////////////////////////////////////////////
-  QDialogButtonBox *dialogButtonBox{new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel)};
-  connect(dialogButtonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
-  connect(dialogButtonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
-  //////////////////////////////////////////////////////////////////////////////////////////
-
-  //////////////////////////////////////////////////////////////////////////////////////////
-  QVBoxLayout *dialogLayout{new QVBoxLayout{}};
-  dialogLayout->addWidget(normalsGroupBox);
-  dialogLayout->addLayout(graphTreeLayout);
-  dialogLayout->addWidget(shapesGroupBox);
-  dialogLayout->addWidget(dialogButtonBox);
-  //////////////////////////////////////////////////////////////////////////////////////////
-
-  this->setLayout(dialogLayout);
+    this->setLayout(dialogLayout);
 }
 
-double QPotasseDialog::neighborsDistance() const
-{
-  return neighborsDistance_->value();
+double qPotasseDialog::neighborsDistance() const {
+    return neighborsDistance_->value();
 }
 
-bool QPotasseDialog::cone() const
-{
-  return cone_->isChecked();
-}
+double qPotasseDialog::cellSize() const { return cellSize_->value(); }
 
-bool QPotasseDialog::cylinder() const
-{
-  return cylinder_->isChecked();
-}
+int qPotasseDialog::cellCardinal() const { return cellCardinal_->value(); }
 
-bool QPotasseDialog::plane() const
-{
-  return plane_->isChecked();
-}
-
-bool QPotasseDialog::sphere() const
-{
-  return sphere_->isChecked();
-}
-
-bool QPotasseDialog::torus() const
-{
-  return torus_->isChecked();
-}
-
+bool qPotasseDialog::plane() const { return planeCheckBox_->isChecked(); }
+bool qPotasseDialog::sphere() const { return sphereCheckBox_->isChecked(); }

@@ -34,12 +34,11 @@
 #include "ccRansacSDDlg.h"
 
 //Qt
-#include <QtGui>
 #include <QApplication>
-#include <QtConcurrentRun>
-#include <QApplication>
-#include <QProgressDialog>
 #include <QMainWindow>
+#include <QProgressDialog>
+#include <QtConcurrentRun>
+#include <QtGui>
 
 //qCC_db
 #include <ccGenericPointCloud.h>

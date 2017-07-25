@@ -1,36 +1,33 @@
+#ifndef _QPOTASSE_DIALOG_H_
+#define _QPOTASSE_DIALOG_H_
+
 #include <QDialog>
 
 class QWidget;
 class QDoubleSpinBox;
-class QCheckBox;
 class QSpinBox;
+class QCheckBox;
 
-class QPotasseDialog
-: public QDialog
-{
-  public:
-    explicit QPotasseDialog(QWidget *parent = Q_NULLPTR);
+class qPotasseDialog : public QDialog {
+   public:
+    explicit qPotasseDialog(QWidget *parent = Q_NULLPTR);
 
     double neighborsDistance() const;
 
-    bool cone() const;
-    bool cylinder() const;
+    double cellSize() const;
+    int cellCardinal() const;
+
     bool plane() const;
     bool sphere() const;
-    bool torus() const;
 
-  protected:
-  private:
-    QDoubleSpinBox *neighborsDistance_,
-                   *graphCellSize_,
-                   *treeCellSize_;
+   protected:
+   private:
+    QDoubleSpinBox *neighborsDistance_;
 
-    QSpinBox *graphCellCardinal_,
-             *treeCellCardinal_;
+    QDoubleSpinBox *cellSize_;
+    QSpinBox *cellCardinal_;
 
-    QCheckBox *cone_;
-    QCheckBox *cylinder_;
-    QCheckBox *plane_;
-    QCheckBox *sphere_;
-    QCheckBox *torus_;
+    QCheckBox *planeCheckBox_, *sphereCheckBox_;
 };
+
+#endif  //_QPOTASSE_DIALOG_H_
