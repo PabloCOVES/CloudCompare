@@ -15,18 +15,13 @@
 //#                                                                        #
 //##########################################################################
 
-//CCLib
-#include <CCPlatform.h>
-
 //qCC
 #include "ccGLWindow.h"
-#include "ccGuiParameters.h"
 #include "ccRenderingTools.h"
 
 //qCC_db
 #include <ccHObjectCaster.h>
 #include <cc2DLabel.h>
-#include <ccGenericPointCloud.h>
 #include <ccSphere.h> //for the pivot symbol
 #include <ccPolyline.h>
 #include <ccPointCloud.h>
@@ -35,7 +30,6 @@
 #include <ccSubMesh.h>
 
 //CCFbo
-#include <ccShader.h>
 #include <ccGlFilter.h>
 #include <ccFrameBufferObject.h>
 
@@ -159,6 +153,13 @@ struct HotZone
 	//point size row width
 	int psi_totalWidth;
 
+	//line size label
+	QString lsi_label;
+	//line size label rect.
+	QRect lsi_labelRect;
+	//line size row width
+	int lsi_totalWidth;
+
 	int margin;
 	int iconSize;
 	QPoint topCorner;
@@ -169,6 +170,7 @@ struct HotZone
 		, bbv_label("bubble-view mode")
 		, fs_label("fullscreen mode")
 		, psi_label("default point size")
+		, lsi_label("default line width")
 		, margin(16)
 		, iconSize(16)
 		, topCorner(0, 0)
@@ -192,12 +194,15 @@ struct HotZone
 		bbv_labelRect = metrics.boundingRect(bbv_label);
 		fs_labelRect = metrics.boundingRect(fs_label);
 		psi_labelRect = metrics.boundingRect(psi_label);
+		lsi_labelRect = metrics.boundingRect(lsi_label);
 
 		psi_totalWidth = /*margin() + */psi_labelRect.width() + margin + iconSize + margin + iconSize/* + margin*/;
+		lsi_totalWidth = /*margin() + */lsi_labelRect.width() + margin + iconSize + margin + iconSize/* + margin*/;
 		bbv_totalWidth = /*margin() + */bbv_labelRect.width() + margin + iconSize/* + margin*/;
 		fs_totalWidth  = /*margin() + */fs_labelRect.width()  + margin + iconSize/* + margin*/;
 
 		textHeight = std::max(psi_labelRect.height(), bbv_labelRect.height());
+		textHeight = std::max(lsi_labelRect.height(), textHeight);
 		textHeight = std::max(fs_labelRect.height(), textHeight);
 		textHeight = (3 * textHeight) / 4; // --> factor: to recenter the baseline a little
 		yTextBottomLineShift = (iconSize / 2) + (textHeight / 2);
@@ -208,7 +213,7 @@ struct HotZone
 		//total hot zone area size (without margin)
 		int totalWidth = 0;
 		if (clickableItemsVisible)
-			totalWidth = psi_totalWidth;
+			totalWidth = std::max(psi_totalWidth, lsi_totalWidth);
 		if (bubbleViewModeEnabled)
 			totalWidth = std::max(totalWidth, bbv_totalWidth);
 		if (fullScreenEnabled)
@@ -216,7 +221,7 @@ struct HotZone
 
 		QPoint minAreaCorner(0         , std::min(0, yTextBottomLineShift - textHeight));
 		QPoint maxAreaCorner(totalWidth, std::max(iconSize, yTextBottomLineShift));
-		int rowCount = clickableItemsVisible ? 1 : 0;
+		int rowCount = clickableItemsVisible ? 2 : 0;
 		rowCount += bubbleViewModeEnabled ? 1 : 0;
 		rowCount += fullScreenEnabled ? 1 : 0;
 		maxAreaCorner.setY(maxAreaCorner.y() + (iconSize + margin) * (rowCount - 1));
@@ -694,12 +699,14 @@ bool ccGLWindow::initialize()
 		//set viewport and visu. as invalid
 		invalidateViewport();
 		invalidateVisualization();
-
+		deprecate3DLayer();
+		
 		//FBO support (TODO: catch error?)
 		m_glExtFuncSupported = m_glExtFunc.initializeOpenGLFunctions();
 
 		//OpenGL version
 		const char* vendorName = reinterpret_cast<const char*>(glFunc->glGetString(GL_VENDOR));
+		const QString vendorNameStr = QString(vendorName).toUpper();
 		if (!m_silentInitialization)
 		{
 			ccLog::Print("[3D View %i] Graphics card manufacturer: %s", m_uniqueID, vendorName);
@@ -713,7 +720,7 @@ bool ccGLWindow::initialize()
 		//VBO support
 		if (context()->hasExtension(QByteArrayLiteral("GL_ARB_vertex_buffer_object")))
 		{
-			if (params.useVBOs && (!vendorName || QString(vendorName).toUpper().startsWith("ATI")))
+			if (params.useVBOs && (!vendorName || vendorNameStr.startsWith("ATI")))
 			{
 				if (!m_silentInitialization)
 					ccLog::Warning("[3D View %i] VBO support has been disabled as it may not work on %s cards!\nYou can manually activate it in the display settings (at your own risk!)", m_uniqueID, vendorName);
@@ -795,7 +802,7 @@ bool ccGLWindow::initialize()
 						if (!getDisplayParameters().isInPersistentSettings("colorScaleUseShader"))
 						{
 							bool shouldUseShader = true;
-							if (!vendorName || QString(vendorName).toUpper().startsWith("ATI") || QString(vendorName).toUpper().startsWith("VMWARE"))
+							if (!vendorName || vendorNameStr.startsWith("ATI") || vendorNameStr.startsWith("VMWARE"))
 							{
 								if (!m_silentInitialization)
 								{
@@ -1056,6 +1063,7 @@ void ccGLWindow::resizeGL(int w, int h)
 
 	invalidateViewport();
 	invalidateVisualization();
+	deprecate3DLayer();
 
 	if (m_initialized)
 	{
@@ -1271,42 +1279,86 @@ void ccGLWindow::drawClickableItems(int xStart0, int& yStart)
 
 	if (m_clickableItemsVisible)
 	{
-		int xStart = m_hotZone->topCorner.x();
+		static const QImage c_minusPix = QImage(":/CC/images/ccMinus.png").mirrored();
+		static const QImage c_plusPix = QImage(":/CC/images/ccPlus.png").mirrored();
 
-		//label
-		glColor3ubv_safe<ccQOpenGLFunctions>(glFunc, m_hotZone->color);
-		renderText(xStart, yStart + m_hotZone->yTextBottomLineShift, m_hotZone->psi_label, m_hotZone->font);
-
-		//icons
-		xStart += m_hotZone->psi_labelRect.width() + m_hotZone->margin;
-
-		//"minus" icon
+		//default point size
 		{
-			static const QImage c_psi_minusPix = QImage(":/CC/images/ccMinus.png").mirrored();
-			ccGLUtils::DisplayTexture2DPosition(c_psi_minusPix, -halfW + xStart, halfH - (yStart + m_hotZone->iconSize), m_hotZone->iconSize, m_hotZone->iconSize);
-			m_clickableItems.push_back(ClickableItem(ClickableItem::DECREASE_POINT_SIZE, QRect(xStart, yStart, m_hotZone->iconSize, m_hotZone->iconSize)));
-			xStart += m_hotZone->iconSize;
-		}
+			int xStart = m_hotZone->topCorner.x();
 
-		//separator
-		{
 			glColor3ubv_safe<ccQOpenGLFunctions>(glFunc, m_hotZone->color);
-			glFunc->glBegin(GL_POINTS);
-			glFunc->glVertex2i(-halfW + xStart + m_hotZone->margin / 2, halfH - (yStart + m_hotZone->iconSize / 2));
-			glFunc->glEnd();
-			xStart += m_hotZone->margin;
-		}
+			renderText(xStart, yStart + m_hotZone->yTextBottomLineShift, m_hotZone->psi_label, m_hotZone->font);
 
-		//"plus" icon
+			//icons
+			xStart += m_hotZone->psi_labelRect.width() + m_hotZone->margin;
+
+			//"minus" icon
+			{
+				ccGLUtils::DisplayTexture2DPosition(c_minusPix, -halfW + xStart, halfH - (yStart + m_hotZone->iconSize), m_hotZone->iconSize, m_hotZone->iconSize);
+				m_clickableItems.push_back(ClickableItem(ClickableItem::DECREASE_POINT_SIZE, QRect(xStart, yStart, m_hotZone->iconSize, m_hotZone->iconSize)));
+				xStart += m_hotZone->iconSize;
+			}
+
+			//separator
+			{
+				glColor3ubv_safe<ccQOpenGLFunctions>(glFunc, m_hotZone->color);
+				glFunc->glBegin(GL_POINTS);
+				glFunc->glVertex2i(-halfW + xStart + m_hotZone->margin / 2, halfH - (yStart + m_hotZone->iconSize / 2));
+				glFunc->glEnd();
+				xStart += m_hotZone->margin;
+			}
+
+			//"plus" icon
+			{
+				ccGLUtils::DisplayTexture2DPosition(c_plusPix, -halfW + xStart, halfH - (yStart + m_hotZone->iconSize), m_hotZone->iconSize, m_hotZone->iconSize);
+				m_clickableItems.push_back(ClickableItem(ClickableItem::INCREASE_POINT_SIZE, QRect(xStart, yStart, m_hotZone->iconSize, m_hotZone->iconSize)));
+				xStart += m_hotZone->iconSize;
+			}
+
+			yStart += m_hotZone->iconSize;
+			yStart += m_hotZone->margin;
+		}
+		
+		//default line size
 		{
-			static const QImage c_psi_plusPix = QImage(":/CC/images/ccPlus.png").mirrored();
-			ccGLUtils::DisplayTexture2DPosition(c_psi_plusPix, -halfW + xStart, halfH - (yStart + m_hotZone->iconSize), m_hotZone->iconSize, m_hotZone->iconSize);
-			m_clickableItems.push_back(ClickableItem(ClickableItem::INCREASE_POINT_SIZE, QRect(xStart, yStart, m_hotZone->iconSize, m_hotZone->iconSize)));
-			xStart += m_hotZone->iconSize;
-		}
+			int xStart = m_hotZone->topCorner.x();
 
-		yStart += m_hotZone->iconSize;
-		yStart += m_hotZone->margin;
+			glColor3ubv_safe<ccQOpenGLFunctions>(glFunc, m_hotZone->color);
+			renderText(xStart, yStart + m_hotZone->yTextBottomLineShift, m_hotZone->lsi_label, m_hotZone->font);
+
+			//icons
+			xStart += m_hotZone->lsi_labelRect.width() + m_hotZone->margin;
+
+			//"minus" icon
+			{
+				ccGLUtils::DisplayTexture2DPosition(c_minusPix, -halfW + xStart, halfH - (yStart + m_hotZone->iconSize), m_hotZone->iconSize, m_hotZone->iconSize);
+				m_clickableItems.push_back(ClickableItem(ClickableItem::DECREASE_LINE_WIDTH, QRect(xStart, yStart, m_hotZone->iconSize, m_hotZone->iconSize)));
+				xStart += m_hotZone->iconSize;
+			}
+
+			//separator
+			{
+				glColor3ubv_safe<ccQOpenGLFunctions>(glFunc, m_hotZone->color);
+				//we use a point to represent the line thickness
+				glFunc->glPushAttrib(GL_POINT_BIT);
+				glFunc->glPointSize(m_viewportParams.defaultLineWidth);
+				glFunc->glBegin(GL_POINTS);
+				glFunc->glVertex2i(-halfW + xStart + m_hotZone->margin / 2, halfH - (yStart + m_hotZone->iconSize / 2));
+				glFunc->glEnd();
+				glFunc->glPopAttrib();
+				xStart += m_hotZone->margin;
+			}
+
+			//"plus" icon
+			{
+				ccGLUtils::DisplayTexture2DPosition(c_plusPix, -halfW + xStart, halfH - (yStart + m_hotZone->iconSize), m_hotZone->iconSize, m_hotZone->iconSize);
+				m_clickableItems.push_back(ClickableItem(ClickableItem::INCREASE_LINE_WIDTH, QRect(xStart, yStart, m_hotZone->iconSize, m_hotZone->iconSize)));
+				xStart += m_hotZone->iconSize;
+			}
+
+			yStart += m_hotZone->iconSize;
+			yStart += m_hotZone->margin;
+		}
 	}
 
 	glFunc->glPopAttrib();
@@ -1317,6 +1369,7 @@ void ccGLWindow::toBeRefreshed()
 	m_shouldBeRefreshed = true;
 
 	invalidateViewport();
+	invalidateVisualization();
 }
 
 void ccGLWindow::refresh(bool only2D/*=false*/)
@@ -1339,7 +1392,8 @@ void ccGLWindow::redraw(bool only2D/*=false*/, bool resetLOD/*=true*/)
 
 	if (!only2D)
 	{
-		m_updateFBO = true;
+		//force the 3D layer to be redrawn
+		deprecate3DLayer();
 	}
 
 	if (isVisible() && !m_autoRefresh)
@@ -1465,7 +1519,9 @@ void ccGLWindow::paintGL()
 #ifdef CC_GL_WINDOW_USE_QWINDOW
 	if (	!m_stereoModeEnabled
 		||	m_stereoParams.glassType != StereoParams::OCULUS
+#ifdef CC_OCULUS_SUPPORT
 		||	s_oculus.mirror.texture
+#endif
 		)
 	{
 		m_context->swapBuffers(this);
@@ -2638,7 +2694,7 @@ void ccGLWindow::updateConstellationCenterAndZoom(const ccBBox* aBox/*=0*/)
 
 	ccBBox zoomedBox;
 
-	//the user has provided a valid bouding box
+	//the user has provided a valid bounding box
 	if (aBox)
 	{
 		zoomedBox = (*aBox);
@@ -2688,6 +2744,7 @@ void ccGLWindow::updateConstellationCenterAndZoom(const ccBBox* aBox/*=0*/)
 
 	invalidateViewport();
 	invalidateVisualization();
+	deprecate3DLayer();
 
 	redraw();
 }
@@ -2765,16 +2822,21 @@ void ccGLWindow::setZoom(float value)
 		m_viewportParams.zoom = value;
 		invalidateViewport();
 		invalidateVisualization();
+		deprecate3DLayer();
 	}
 }
 
 void ccGLWindow::setCameraPos(const CCVector3d& P)
 {
-	m_viewportParams.cameraCenter = P;
-	emit cameraPosChanged(m_viewportParams.cameraCenter);
+	if ((m_viewportParams.cameraCenter - P).norm2d() != 0)
+	{
+		m_viewportParams.cameraCenter = P;
+		emit cameraPosChanged(m_viewportParams.cameraCenter);
 
-	invalidateViewport();
-	invalidateVisualization();
+		invalidateViewport();
+		invalidateVisualization();
+		deprecate3DLayer();
+	}
 }
 
 void ccGLWindow::moveCamera(float dx, float dy, float dz)
@@ -2841,6 +2903,7 @@ void ccGLWindow::setPixelSize(float pixelSize)
 
 	invalidateViewport();
 	invalidateVisualization();
+	deprecate3DLayer();
 }
 
 void ccGLWindow::setSceneDB(ccHObject* root)
@@ -3030,7 +3093,6 @@ void ccGLWindow::getVisibleObjectsBB(ccBBox& box) const
 void ccGLWindow::invalidateViewport()
 {
 	m_validProjectionMatrix = false;
-	m_updateFBO = true;
 }
 
 ccGLMatrixd ccGLWindow::computeProjectionMatrix(const CCVector3d& cameraCenter, bool withGLfeatures, ProjectionMetrics* metrics/*=0*/, double* eyeOffset/*=0*/) const
@@ -3182,10 +3244,14 @@ void ccGLWindow::updateProjectionMatrix()
 	m_validProjectionMatrix = true;
 }
 
+void ccGLWindow::deprecate3DLayer()
+{
+	m_updateFBO = true;
+}
+
 void ccGLWindow::invalidateVisualization()
 {
 	m_validModelviewMatrix = false;
-	m_updateFBO = true;
 }
 
 ccGLMatrixd ccGLWindow::computeModelViewMatrix(const CCVector3d& cameraCenter) const
@@ -3721,6 +3787,7 @@ void ccGLWindow::mouseMoveEvent(QMouseEvent *event)
 					m_customLightPos[1] += static_cast<float>(u.y);
 					m_customLightPos[2] += static_cast<float>(u.z);
 					invalidateViewport();
+					deprecate3DLayer();
 				}
 			}
 			else //camera moving mode
@@ -3772,10 +3839,14 @@ void ccGLWindow::mouseMoveEvent(QMouseEvent *event)
 
 			for (std::list<ccInteractor*>::iterator it = m_activeItems.begin(); it != m_activeItems.end(); ++it)
 			{
-				if ((*it)->move2D(x * retinaScale, y * retinaScale, dx * retinaScale, dy * retinaScale, glWidth(), glHeight()) || (*it)->move3D(u))
+				if ((*it)->move2D(x * retinaScale, y * retinaScale, dx * retinaScale, dy * retinaScale, glWidth(), glHeight()))
 				{
 					invalidateViewport();
-					//m_updateFBO = true; //already done by invalidateViewport
+				}
+				else if ((*it)->move3D(u))
+				{
+					invalidateViewport();
+					deprecate3DLayer();
 				}
 			}
 		}
@@ -3865,7 +3936,6 @@ void ccGLWindow::mouseMoveEvent(QMouseEvent *event)
 					rotMat = ccGLMatrixd::FromToRotation(m_lastMouseOrientation, m_currentMouseOrientation);
 				}
 				m_lastMouseOrientation = m_currentMouseOrientation;
-				m_updateFBO = true;
 
 				if (m_interactionFlags & INTERACT_TRANSFORM_ENTITIES)
 				{
@@ -3925,35 +3995,58 @@ bool ccGLWindow::processClickableItems(int x, int y)
 	switch (clickedItem)
 	{
 	case ClickableItem::NO_ROLE:
+	{
 		//nothing to do
-		break;
+	}
+	break;
+	
 	case ClickableItem::INCREASE_POINT_SIZE:
-		{
-			setPointSize(m_viewportParams.defaultPointSize + 1.0f);
-			redraw();
-		}
-		return true;
+	{
+		setPointSize(m_viewportParams.defaultPointSize + 1.0f);
+		redraw();
+	}
+	return true;
+	
 	case ClickableItem::DECREASE_POINT_SIZE:
-		{
-			setPointSize(m_viewportParams.defaultPointSize - 1.0f);
-			redraw();
-		}
-		return true;
+	{
+		setPointSize(m_viewportParams.defaultPointSize - 1.0f);
+		redraw();
+	}
+	return true;
+	
+	case ClickableItem::INCREASE_LINE_WIDTH:
+	{
+		setLineWidth(m_viewportParams.defaultLineWidth + 1.0f);
+		redraw();
+	}
+	return true;
+	
+	case ClickableItem::DECREASE_LINE_WIDTH:
+	{
+		setLineWidth(m_viewportParams.defaultLineWidth - 1.0f);
+		redraw();
+	}
+	return true;
+	
 	case ClickableItem::LEAVE_BUBBLE_VIEW_MODE:
 	{
 		setBubbleViewMode(false);
 		redraw();
 	}
 	return true;
+	
 	case ClickableItem::LEAVE_FULLSCREEN_MODE:
 	{
 		toggleExclusiveFullScreen(false);
 	}
 	return true;
+	
 	default:
+	{
 		//unhandled item?!
 		assert(false);
-		break;
+	}
+	break;
 	}
 
 	return false;
@@ -4578,6 +4671,7 @@ void ccGLWindow::startCPUBasedPointPicking(const PickingParameters& params)
 	int nearestElementIndex = -1;
 	double nearestElementSquareDist = -1.0;
 	CCVector3 nearestPoint(0, 0, 0);
+	static const unsigned MIN_POINTS_FOR_OCTREE_COMPUTATION = 128;
 
 	static ccGui::ParamStruct::ComputeOctreeForPicking autoComputeOctreeThisSession = ccGui::ParamStruct::ASK_USER;
 	bool autoComputeOctree = false;
@@ -4612,7 +4706,7 @@ void ccGLWindow::startCPUBasedPointPicking(const PickingParameters& params)
 				{
 					ccGenericPointCloud* cloud = static_cast<ccGenericPointCloud*>(ent);
 
-					if (firstCloudWithoutOctree && !cloud->getOctree())
+					if (firstCloudWithoutOctree && !cloud->getOctree() && cloud->size() > MIN_POINTS_FOR_OCTREE_COMPUTATION) //no need to use the octree for a few points!
 					{
 						//can we compute an octree for picking?
 						ccGui::ParamStruct::ComputeOctreeForPicking behavior = getDisplayParameters().autoComputeOctree;
@@ -4686,7 +4780,7 @@ void ccGLWindow::startCPUBasedPointPicking(const PickingParameters& params)
 						nearestSquareDist,
 						params.pickWidth,
 						params.pickHeight,
-						autoComputeOctree))
+						autoComputeOctree && cloud->size() > MIN_POINTS_FOR_OCTREE_COMPUTATION))
 					{
 						if (nearestElementIndex < 0 || (nearestPointIndex >= 0 && nearestSquareDist < nearestElementSquareDist))
 						{
@@ -4806,7 +4900,6 @@ void ccGLWindow::displayNewMessage(	const QString& message,
 		if (pos == SCREEN_CENTER_MESSAGE)
 		{
 			ccLog::Warning("[ccGLWindow::displayNewMessage] Append is not supported for center screen messages!");
-			append = false;
 		}
 	}
 
@@ -4831,7 +4924,7 @@ void ccGLWindow::setPointSize(float size, bool silent/*=false*/)
 	if (m_viewportParams.defaultPointSize != newSize)
 	{
 		m_viewportParams.defaultPointSize = newSize;
-		m_updateFBO = true;
+		deprecate3DLayer();
 	
 		if (!silent)
 		{
@@ -4846,8 +4939,11 @@ void ccGLWindow::setPointSize(float size, bool silent/*=false*/)
 
 void ccGLWindow::setLineWidth(float width)
 {
-	m_viewportParams.defaultLineWidth = width;
-	m_updateFBO = true;
+	if (m_viewportParams.defaultLineWidth != width)
+	{
+		m_viewportParams.defaultLineWidth = width;
+		deprecate3DLayer();
+	}
 }
 
 int FontSizeModifier(int fontSize, float zoomFactor)
@@ -4961,6 +5057,7 @@ void ccGLWindow::setCustomLight(bool state)
 						CUSTOM_LIGHT_STATE_MESSAGE);
 
 	invalidateViewport();
+	deprecate3DLayer();
 	redraw();
 
 	//save parameter
@@ -5046,6 +5143,7 @@ void ccGLWindow::showPivotSymbol(bool state)
 	if (state && !m_pivotSymbolShown && m_viewportParams.objectCenteredView && m_pivotVisibility != PIVOT_HIDE)
 	{
 		invalidateViewport();
+		deprecate3DLayer();
 	}
 
 	m_pivotSymbolShown = state;
@@ -5299,6 +5397,7 @@ void ccGLWindow::setPerspectiveState(bool state, bool objectCenteredView)
 	m_bubbleViewModeEnabled = false;
 	invalidateViewport();
 	invalidateVisualization();
+	deprecate3DLayer();
 }
 
 void ccGLWindow::setAspectRatio(float ar)
@@ -5319,6 +5418,7 @@ void ccGLWindow::setAspectRatio(float ar)
 		{
 			invalidateViewport();
 			invalidateVisualization();
+			deprecate3DLayer();
 		}
 	}
 }
@@ -5345,6 +5445,7 @@ void ccGLWindow::setFov(float fov_deg)
 		{
 			invalidateViewport();
 			invalidateVisualization();
+			deprecate3DLayer();
 
 			displayNewMessage(	QString("F.O.V. = %1 deg.").arg(fov_deg, 0, 'f', 1),
 								ccGLWindow::LOWER_LEFT_MESSAGE, //DGM HACK: we cheat and use the same 'slot' as the window size
@@ -5375,6 +5476,7 @@ void ccGLWindow::setBubbleViewFov(float fov_deg)
 		{
 			invalidateViewport();
 			invalidateVisualization();
+			deprecate3DLayer();
 			emit fovChanged(m_bubbleViewFov_deg);
 		}
 	}
@@ -5401,6 +5503,8 @@ void ccGLWindow::setZNearCoef(double coef)
 			//DGM: we update the projection matrix directly so as to get an up-to-date estimation of zNear
 			updateProjectionMatrix();
 
+			deprecate3DLayer();
+
 			displayNewMessage(	QString("Near clipping = %1% of max depth (= %2)").arg(m_viewportParams.zNearCoef * 100.0, 0, 'f', 1).arg(m_viewportParams.zNear),
 								ccGLWindow::LOWER_LEFT_MESSAGE, //DGM HACK: we cheat and use the same 'slot' as the window size
 								false,
@@ -5419,6 +5523,7 @@ void ccGLWindow::setViewportParameters(const ccViewportParameters& params)
 
 	invalidateViewport();
 	invalidateVisualization();
+	deprecate3DLayer();
 
 	emit baseViewMatChanged(m_viewportParams.viewMat);
 	emit pivotPointChanged(m_viewportParams.pivotPoint);
@@ -5434,6 +5539,7 @@ void ccGLWindow::rotateBaseViewMat(const ccGLMatrixd& rotMat)
 	emit baseViewMatChanged(m_viewportParams.viewMat);
 
 	invalidateVisualization();
+	deprecate3DLayer();
 }
 
 void ccGLWindow::updateZoom(float zoomFactor)
@@ -5513,6 +5619,7 @@ void ccGLWindow::setView(CC_VIEW_ORIENTATION orientation, bool forceRedraw/*=tru
 		setPerspectiveState(m_viewportParams.perspectiveView, false);
 
 	invalidateVisualization();
+	deprecate3DLayer();
 
 	//we emit the 'baseViewMatChanged' signal
 	emit baseViewMatChanged(m_viewportParams.viewMat);
@@ -5876,7 +5983,7 @@ bool ccGLWindow::initFBO(int w, int h)
 		}
 	}
 
-	m_updateFBO = true;
+	deprecate3DLayer();
 	return true;
 }
 
@@ -6413,34 +6520,31 @@ void ccGLWindow::renderText(int x, int y, const QString & str, const QFont & fon
 	assert(glFunc);
 
 	//compute the text bounding rect
-	QRect rect = QFontMetrics(font).boundingRect(str);
+	// This adjustment and the change to x & y are to work around a crash with Qt 5.9.
+	// At the time I (Andy) could not determine if it is a bug in CC or Qt.
+	//		https://bugreports.qt.io/browse/QTBUG-61863
+	//		https://github.com/CloudCompare/CloudCompare/issues/543
+	QRect rect = QFontMetrics(font).boundingRect(str).adjusted( -1, -2, 1, 2 );
+	
+	x -= 1;	// magic number!
+	y += 3;	// magic number!
 
 	//first we create a QImage from the text
-	//QRect textRect = rect;
-	//if (devicePixelRatio() > 1)
-	//{
-	//	textRect.setWidth(rect.width() + devicePixelRatio());
-	//	textRect.setHeight(rect.height() + devicePixelRatio());
-	//}
 	QImage textImage(rect.width(), rect.height(), QImage::Format::Format_RGBA8888);
+	rect = textImage.rect();
+	
+	textImage.fill(Qt::transparent);
 	{
 		QPainter painter(&textImage);
-		painter.setRenderHints(QPainter::Antialiasing | QPainter::TextAntialiasing);
-		textImage.fill(Qt::transparent);
 
 		float glColor[4];
 		glFunc->glGetFloatv(GL_CURRENT_COLOR, glColor);
 		QColor color;
-		{
-			color.setRedF(glColor[0]);
-			color.setGreenF(glColor[1]);
-			color.setBlueF(glColor[2]);
-			color.setAlphaF(glColor[3]);
-		}
-		QPen pen(color);
-		painter.setPen(pen);
-		painter.setFont(font);
-		painter.drawText(-rect.x() - (devicePixelRatio() - 1) * 2, -rect.y() - (devicePixelRatio() - 1) * 2, str); //DGM: works (otherwise the rendered text is truncated)... but why?!
+		color.setRgbF( glColor[0], glColor[1], glColor[2], glColor[3] );
+		
+		painter.setPen( color );
+		painter.setFont( font );
+		painter.drawText( rect, Qt::AlignCenter, str );
 	}
 	
 	//and then we convert this QImage to a texture!
@@ -6462,7 +6566,9 @@ void ccGLWindow::renderText(int x, int y, const QString & str, const QFont & fon
 			glFunc->glTranslatef(x, m_glViewport.height() - 1 - y, 0);
 
 			glFunc->glEnable(GL_TEXTURE_2D);         
-			QOpenGLTexture textTex(textImage);
+			QOpenGLTexture textTex( textImage, QOpenGLTexture::DontGenerateMipMaps );
+			textTex.setMinificationFilter( QOpenGLTexture::Linear );
+			textTex.setMagnificationFilter( QOpenGLTexture::Linear );
 			textTex.bind();
 
 			glFunc->glColor4f(1.0f, 1.0f, 1.0f, 1.0f); //DGM: warning must be float colors to work properly?!

@@ -156,6 +156,7 @@
      <addaction name="actionAddIdField"/>
      <addaction name="actionExportCoordToSF"/>
      <addaction name="actionSetSFAsCoord"/>
+     <addaction name="actionInterpolateSFs"/>
      <addaction name="actionScalarFieldArithmetic"/>
      <addaction name="separator"/>
      <addaction name="actionOpenColorScalesManager"/>
@@ -2617,10 +2618,10 @@ QTreeView::branch:open:has-children:has-siblings  {
   </action>
   <action name="actionResetGUIElementsPos">
    <property name="text">
-    <string>Reset all GUI elements positions</string>
+    <string>Reset all GUI element positions</string>
    </property>
    <property name="toolTip">
-    <string>Reset all GUI elements positions (after restart)</string>
+    <string>Reset all GUI element positions (after restart)</string>
    </property>
   </action>
   <action name="actionConvertToRandomRGB">
@@ -3015,6 +3016,14 @@ QTreeView::branch:open:has-children:has-siblings  {
    </property>
    <property name="toolTip">
     <string>Compress the associated FWF data (maybe interesting after interactive segmentation for instance)</string>
+   </property>
+  </action>
+  <action name="actionInterpolateSFs">
+   <property name="text">
+    <string>Interpolate from another entity</string>
+   </property>
+   <property name="toolTip">
+    <string>Interpolate scalar-field(s) from another cloud or mesh</string>
    </property>
   </action>
  </widget>

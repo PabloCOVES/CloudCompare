@@ -11,48 +11,37 @@
 //#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the          #
 //#  GNU General Public License for more details.                          #
 //#                                                                        #
-//#          COPYRIGHT: EDF R&D / TELECOM ParisTech (ENST-TSI)             #
+//#                    COPYRIGHT: Daniel Girardeau-Montaut                 #
 //#                                                                        #
 //##########################################################################
 
-#ifndef CC_ENTITY_PICKER_DIALOG_HEADER
-#define CC_ENTITY_PICKER_DIALOG_HEADER
+#ifndef CC_INTERPOLATION_DLG_HEADER
+#define CC_INTERPOLATION_DLG_HEADER
 
-#include <ui_pickEntityDlg.h>
+#include <ui_interpolationDlg.h>
 
 //qCC_db
-#include <ccHObject.h>
+#include <ccPointCloudInterpolator.h>
 
-
-//! Dialog to select one or multiple entities
-class ccEntityPickerDlg : public QDialog, public Ui::PickEntityDlg
+//! Dialog for generic interpolation algorithms
+class ccInterpolationDlg : public QDialog, public Ui::InterpolationDlg
 {
+	Q_OBJECT
+
 public:
+
 	//! Default constructor
-	ccEntityPickerDlg(	const ccHObject::Container& entities,
-						bool multiSelectionEnabled,
-						int defaultSelectedIndex = 0,
-						QWidget* parent = 0,
-						QString label = QString());
+	explicit ccInterpolationDlg(QWidget* parent = 0);
 
-	//! Returns selected index (unique selection mode)
-	int getSelectedIndex() const;
+	ccPointCloudInterpolator::Parameters::Method getInterpolationMethod() const;
+	void setInterpolationMethod(ccPointCloudInterpolator::Parameters::Method method);
 
-	//! Returns selected indexes (multi-selection mode)
-	void getSelectedIndexes(std::vector<int>& indexes) const;
+	ccPointCloudInterpolator::Parameters::Algo getInterpolationAlgorithm() const;
+	void setInterpolationAlgorithm(ccPointCloudInterpolator::Parameters::Algo algo);
 
-	//! Static shortcut: unique selection mode
-	static int SelectEntity(const ccHObject::Container& entities,
-							int defaultSelectedIndex = 0,
-							QWidget* parent = 0,
-							QString label = QString());
+protected slots:
 
-	//! Static shortcut: multi-selection mode
-	static bool SelectEntities(	const ccHObject::Container& entities,
-								std::vector<int>& indexes,
-								QWidget* parent = 0,
-								QString label = QString());
-
+	void onRadiusUpdated(double);
 };
 
-#endif //CC_ENTITY_PICKER_DIALOG_HEADER
+#endif //CC_INTERPOLATION_DLG_HEADER

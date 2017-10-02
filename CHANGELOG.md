@@ -1,5 +1,5 @@
-CloudCompare versions history
-=============================
+CloudCompare version history
+============================
 
 v2.9.alpha - XX/XX/XXXX
 ----------------------
@@ -18,11 +18,25 @@ v2.9.alpha - XX/XX/XXXX
 		- the 2D position (in pixels) is always displayed
 		- the 3D position of the point below the cursor is displayed if possible
 
+	* New tool to import scalar fields from one cloud to another: 'Edit > SFs > Interpolate from another entity'
+		- 3 neighbor extraction methods are supported (nearest neighbor, inside a sphere or with a given number of neighbors)
+		- 3 algorithms are available: average, median and weighted average
+
+	* New interactor to change the default line width (via the 'hot zone' in the upper-left corner of 3D views)
+	
+	* When a picking operation is active, the ESC key will cancel it.
+
 - enhancements:
 
 	* qAnimation plugin:
 		- new output option 'zoom' (alternative to the existing 'super resolution' option)
 		- the plugin doesn't spam the Console at each frame if the 'super resolution' option is > 1 ;)
+
+	* M3C2 plugin:
+		- "Precision Maps" support added (as described in "3D uncertainty-based topographic change detection with SfM
+			photogrammetry: precision maps for ground control and directly georeferenced surveys" by James et al.)
+		- Allows for the computation of the uncertainty based on precision scalar fields (standard deviation along X, Y and Z)
+			instead of the cloud local roughness
 
 	* 'Unroll' tool:
 		- new cone 'unroll' mode (the true 'unroll' mode - the other one has been renamed 'Straightened cone' ;)
@@ -45,11 +59,11 @@ v2.9.alpha - XX/XX/XXXX
 
 	* Command line mode
 		- the Rasterize tool is now accessible via the command line:
-			'-RASTERIZE -GRID_STEP {value}'
+			* '-RASTERIZE -GRID_STEP {value}'
 			* additional options are:
 				-VERT_DIR {0=X/1=Y/2=Z} - default is Z
 				-EMPTY_FILL {MIN_H/MAX_H/CUSTOM_H/INTERP} - default is 'leave cells empty'
-				-CUSTOM_HEIGHT {value} - to define the custom height filling value if the 'CUSTOM_H' stragety is used (see above)
+				-CUSTOM_HEIGHT {value} - to define the custom height filling value if the 'CUSTOM_H' strategy is used (see above)
 				-PROJ {MIN/AVG/MAX} - default is AVG (average)
 				-SF_PROJ {MIN/AVG/MAX} - default is AVG (average)
 				-OUTPUT_CLOUD - to output the result as a cloud (default if no other output format is defined)
@@ -58,11 +72,19 @@ v2.9.alpha - XX/XX/XXXX
 				-OUTPUT_RASTER_RGB - to output the result as a geotiff raster (RGB)
 				-RESAMPLE - to resample the input cloud instead of generating a regular cloud (or mesh)
 			* if OUTPUT_CLOUD and/or OUTPUT_MESH options are selected, the resulting entities are kept in memory.
-				Moreover if OUTPUT_CLOUD is selected, the resutling raster will replace the original cloud.
-		- 2.5D Volume Calculation tool (-VOLUME -GRID_STEP {...} etc. - see the wiki for more details)
-		- Export coord. to SF (-COORD_TO_SF {X, Y or Z})
-		- the progress bar shouldn't appear anymore when loading / saving a file with 'SILENT' mode enabled
-		- the ASCII loading dialog shouldn't appear anymore in 'SILENT' mode (only if CC really can't guess anything)
+				Moreover if OUTPUT_CLOUD is selected, the resulting raster will replace the original cloud.
+		- 2.5D Volume Calculation tool
+			* '-VOLUME -GRID_STEP {...} etc.' (see the wiki for more details)
+		- Export coord. to SF
+			* '-COORD_TO_SF {X, Y or Z}'
+		- Compute unstructured cloud normals:
+			* '-OCTREE_NORMALS {radius}'
+			* for now the local model is 'Height Function' and no default orientation is specified
+		- Clear normals
+			* '-CLEAR_NORMALS'
+		- Other improvements:
+			* the progress bar shouldn't appear anymore when loading / saving a file with 'SILENT' mode enabled
+			* the ASCII loading dialog shouldn't appear anymore in 'SILENT' mode (only if CC really can't guess anything)
 
 	* Rasterize tool
 		- new option to re-project contour lines computed on a scalar field (i.e. a layer other than the altitudes)
@@ -76,8 +98,12 @@ v2.9.alpha - XX/XX/XXXX
 		- the 'Spatial Reference System' of LAS files is now stored as meta-data and restored
 			when exporting the cloud as a LAS/LAZ file.
 
+	* PLY I/O filter
+		- now supports quads (quads are loaded as 2 triangles)
+
 	* Oculus support
 		- CC now displays in the current 3D view the mirror image of what is displayed in the headset
+		- using SDK 1.15
 
 	* Point List Picking tool
 		- the list can now be exported as a 'global index, x, y, z' text file
@@ -86,7 +112,7 @@ v2.9.alpha - XX/XX/XXXX
 		- new option to use the same scale for all dimensions
 		- new option to apply the scale to the 'Global shift' (or not)
 
-	* New Menu Entry: Edit > Grid
+	* New Menu Entry: 'Edit > Grid'
 		- Delete scan grids: An underlying grid structure can now be deleted
 
 	* New method: 'Edit > Waveforms > Compress FWF data'
@@ -95,9 +121,18 @@ v2.9.alpha - XX/XX/XXXX
 		- Compression is done automatically when saving a cloud with the 'LAS 1.3 / 1.4' filter (QLAS_FWF_IO_PLUGIN)
 			(but it's not done when saving the entity as a BIN file)
 
+	* qEllipser dialog:
+		- option to export the image as a (potentially scaled) point cloud
+
+	* Normal computation tools:
+		- new algorithm to compute the normals based on scan grids (faster, and more robust)
+		- the 'kernel size' parameter is replaced by 'the minimum angle of triangles' used in the internal triangulation process
+
 	* Other
 		- color scales are now listed in alphabetical order
 		- the DXF format can now be used to export point clouds (their size should be very limited!)
+		- polylines exported from the 'Interactive Segmentation' tool will now use the same Global Shift as the segmented entity(ies)
+		- when changing the dip and dip direction of plane parallel with XY, the resulting plane shouldn't rotate in an arbitrary way anymore
 
 - Bug fixes:
 	* STL files are now output by default in BINARY mode in command line mode (no more annoying dialog)
@@ -110,6 +145,10 @@ v2.9.alpha - XX/XX/XXXX
 	* the 'Edit > Sensors > Camera > Create' function was broken (input parameters were ignored)
 	* merging clouds with FWF data would duplicate the waveforms of the first one
 	* invalid lines in ASCII (text) files could be considered as a valid point with coordinates (0, 0, 0)
+	* Point-pair based alignment tool:
+		- extracting spheres on a cloud with Global Shift would create the sphere in the global coordinate system instead of the local one (i.e. the sphere was not visible)
+		- deleting a point would remove all the detected spheres
+	* The FARO I/O plugin was associating a wrong transformation to the scan grids, resulting in weird results when computing normals or constructing a mesh based on scan grids
 
 v2.8.1 - 16/02/2017
 ----------------------
@@ -123,6 +162,8 @@ v2.8.1 - 16/02/2017
 	* Rasterize tool: scalar fields were vertically mirrored when exported to a geotiff raster
 	* [macOS] Fix the packaging of the qAnimation plugin so it can find the correct libraries
 	* qAnimation plugin: the export to separate frames was broken
+	* the polyline width was not correctly set in the properties dialog (always set to 'Default')
+	* the clipping box arrows were not displayed correctly when the lights were turned off
 
 v2.8 - 12/18/2016
 ----------------------

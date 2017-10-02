@@ -113,7 +113,9 @@ qM3C2Dialog::qM3C2Dialog(ccPointCloud* cloud1, ccPointCloud* cloud2, ccMainAppIn
 		//add list of clouds to the combo-boxes
 		ccHObject::Container clouds;
 		if (m_app->dbRootObject())
+		{
 			m_app->dbRootObject()->filterChildren(clouds, true, CC_TYPES::POINT_CLOUD);
+		}
 
 		for (size_t i = 0; i < clouds.size(); ++i)
 		{
@@ -123,6 +125,78 @@ qM3C2Dialog::qM3C2Dialog(ccPointCloud* cloud1, ccPointCloud* cloud2, ccMainAppIn
 				normOriCloudComboBox->addItem(GetEntityName(clouds[i]), QVariant(clouds[i]->getUniqueID()));
 			}
 		}
+	}
+}
+
+bool PopulateSFCombo(QComboBox* combo, const ccPointCloud& cloud, int defaultFieldIndex = -1, QString defaultField = QString())
+{
+	unsigned sfCount = cloud.getNumberOfScalarFields();
+	if (!combo || sfCount == 0)
+	{
+		assert(false);
+		return false;
+	}
+
+	combo->clear();
+	int selectedFieldIndex = -1;
+	bool defaultFieldFound = false;
+	for (unsigned i = 0; i < sfCount; ++i)
+	{
+		QString sfName = cloud.getScalarFieldName(i);
+		combo->addItem(sfName);
+		if (selectedFieldIndex < 0 && !defaultField.isEmpty())
+		{
+			if (sfName.contains(defaultField, Qt::CaseInsensitive))
+			{
+				selectedFieldIndex = static_cast<int>(i);
+				defaultFieldFound = true;
+			}
+		}
+	}
+
+	if (selectedFieldIndex < 0)
+	{
+		selectedFieldIndex = defaultFieldIndex;
+	}
+	combo->setCurrentIndex(selectedFieldIndex);
+
+	return defaultFieldFound;
+}
+
+bool PopulatePMFields(QComboBox* sx, QComboBox* sy, QComboBox* sz, const ccPointCloud& cloud)
+{
+	assert(sx && sy && sz);
+	int sfCount = static_cast<int>(cloud.getNumberOfScalarFields());
+	if (sfCount == 0)
+	{
+		assert(false);
+		return false;
+	}
+
+	bool sxFound = PopulateSFCombo(sx, cloud, std::min<int>(sfCount, 0), "sx");
+	bool syFound = PopulateSFCombo(sy, cloud, std::min<int>(sfCount, 1), "sy");
+	bool szFound = PopulateSFCombo(sz, cloud, std::min<int>(sfCount, 2), "sz");
+
+	return sxFound && syFound && szFound;
+}
+
+void qM3C2Dialog::setupPrecisionMapsTab()
+{
+	precisionMapsGroupBox->setEnabled(false);
+
+	if (!m_cloud1 || !m_cloud2)
+	{
+		assert(false);
+		return;
+	}
+
+	if (m_cloud1->hasScalarFields() && m_cloud2->hasScalarFields())
+	{
+		bool wasChecked = precisionMapsGroupBox->isChecked();
+		bool auto1 = PopulatePMFields(c1SxComboBox, c1SyComboBox, c1SzComboBox, *m_cloud1);
+		bool auto2 = PopulatePMFields(c2SxComboBox, c2SyComboBox, c2SzComboBox, *m_cloud2);
+		precisionMapsGroupBox->setChecked(wasChecked && (auto1 && auto2));
+		//precisionMapsGroupBox->setEnabled(true);
 	}
 }
 
@@ -163,6 +237,8 @@ void qM3C2Dialog::setClouds(ccPointCloud* cloud1, ccPointCloud* cloud2)
 		guessParams(true);
 		m_firstTimeInit = false;
 	}
+
+	setupPrecisionMapsTab();
 }
 
 void qM3C2Dialog::ifUseOtherCloudForCorePoints(bool state)
@@ -294,37 +370,41 @@ void qM3C2Dialog::loadParamsFromPersistentSettings()
 void qM3C2Dialog::loadParamsFrom(const QSettings& settings)
 {
 	//read out parameters
-	double normalScale = settings.value("NormalScale",normalScaleDoubleSpinBox->value()).toDouble();
-	int normModeInt = settings.value("NormalMode",static_cast<int>(getNormalsComputationMode())).toInt();
-	double normMinScale = settings.value("NormalMinScale",minScaleDoubleSpinBox->value()).toDouble();
-	double normStep = settings.value("NormalStep",stepScaleDoubleSpinBox->value()).toDouble();
-	double normMaxScale = settings.value("NormalMaxScale",maxScaleDoubleSpinBox->value()).toDouble();
-	bool normUseCorePoints = settings.value("NormalUseCorePoints",normUseCorePointsCheckBox->isChecked()).toBool();
-	int normPreferredOri = settings.value("NormalPreferedOri",normOriPreferredComboBox->currentIndex()).toInt();
+	double normalScale = settings.value("NormalScale", normalScaleDoubleSpinBox->value()).toDouble();
+	int normModeInt = settings.value("NormalMode", static_cast<int>(getNormalsComputationMode())).toInt();
+	double normMinScale = settings.value("NormalMinScale", minScaleDoubleSpinBox->value()).toDouble();
+	double normStep = settings.value("NormalStep", stepScaleDoubleSpinBox->value()).toDouble();
+	double normMaxScale = settings.value("NormalMaxScale", maxScaleDoubleSpinBox->value()).toDouble();
+	bool normUseCorePoints = settings.value("NormalUseCorePoints", normUseCorePointsCheckBox->isChecked()).toBool();
+	int normPreferredOri = settings.value("NormalPreferedOri", normOriPreferredComboBox->currentIndex()).toInt();
 
-	double seachScale = settings.value("SearchScale",cylDiameterDoubleSpinBox->value()).toDouble();
-	double searchDepth = settings.value("SearchDepth",cylHalfHeightDoubleSpinBox->value()).toDouble();
-	
-	double subsampleRadius = settings.value("SubsampleRadius",cpSubsamplingDoubleSpinBox->value()).toDouble();
-	bool subsampleEnabled = settings.value("SubsampleEnabled",cpSubsampleRadioButton->isChecked()).toBool();
-	
-	double registrationError = settings.value("RegistrationError",rmsDoubleSpinBox->value()).toDouble();
-	bool registrationErrorEnabled = settings.value("RegistrationErrorEnabled",rmsCheckBox->isChecked()).toBool();
+	double seachScale = settings.value("SearchScale", cylDiameterDoubleSpinBox->value()).toDouble();
+	double searchDepth = settings.value("SearchDepth", cylHalfHeightDoubleSpinBox->value()).toDouble();
 
-	bool useSinglePass4Depth = settings.value("UseSinglePass4Depth",useSinglePass4DepthCheckBox->isChecked()).toBool();
-	bool positiveSearchOnly = settings.value("PositiveSearchOnly",positiveSearchOnlyCheckBox->isChecked()).toBool();
-	bool useMedian = settings.value("UseMedian",useMedianCheckBox->isChecked()).toBool();
-	
-	bool useMinPoints4Stat = settings.value("UseMinPoints4Stat",useMinPoints4StatCheckBox->isChecked()).toBool();
-	int minPoints4Stat = settings.value("MinPoints4Stat",minPoints4StatSpinBox->value()).toInt();
+	double subsampleRadius = settings.value("SubsampleRadius", cpSubsamplingDoubleSpinBox->value()).toDouble();
+	bool subsampleEnabled = settings.value("SubsampleEnabled", cpSubsampleRadioButton->isChecked()).toBool();
 
-	int projDestIndex = settings.value("ProjDestIndex",projDestComboBox->currentIndex()).toInt();
-	bool useOriginalCloud = settings.value("UseOriginalCloud",useOriginalCloudCheckBox->isChecked()).toBool();
+	double registrationError = settings.value("RegistrationError", rmsDoubleSpinBox->value()).toDouble();
+	bool registrationErrorEnabled = settings.value("RegistrationErrorEnabled", rmsCheckBox->isChecked()).toBool();
 
-	bool exportStdDevInfo = settings.value("ExportStdDevInfo",exportStdDevInfoCheckBox->isChecked()).toBool();
-	bool exportDensityAtProjScale = settings.value("ExportDensityAtProjScale",exportDensityAtProjScaleCheckBox->isChecked()).toBool();
+	bool useSinglePass4Depth = settings.value("UseSinglePass4Depth", useSinglePass4DepthCheckBox->isChecked()).toBool();
+	bool positiveSearchOnly = settings.value("PositiveSearchOnly", positiveSearchOnlyCheckBox->isChecked()).toBool();
+	bool useMedian = settings.value("UseMedian", useMedianCheckBox->isChecked()).toBool();
+
+	bool useMinPoints4Stat = settings.value("UseMinPoints4Stat", useMinPoints4StatCheckBox->isChecked()).toBool();
+	int minPoints4Stat = settings.value("MinPoints4Stat", minPoints4StatSpinBox->value()).toInt();
+
+	int projDestIndex = settings.value("ProjDestIndex", projDestComboBox->currentIndex()).toInt();
+	bool useOriginalCloud = settings.value("UseOriginalCloud", useOriginalCloudCheckBox->isChecked()).toBool();
+
+	bool exportStdDevInfo = settings.value("ExportStdDevInfo", exportStdDevInfoCheckBox->isChecked()).toBool();
+	bool exportDensityAtProjScale = settings.value("ExportDensityAtProjScale", exportDensityAtProjScaleCheckBox->isChecked()).toBool();
 
 	int maxThreadCount = settings.value("MaxThreadCount", maxThreadCountSpinBox->maximum()).toInt();
+
+	bool usePrecisionMaps = settings.value("UsePrecisionMaps", precisionMapsGroupBox->isChecked()).toBool();
+	double pm1Scale = settings.value("PM1Scale", pm1ScaleDoubleSpinBox->value()).toDouble();
+	double pm2Scale = settings.value("PM2Scale", pm2ScaleDoubleSpinBox->value()).toDouble();
 
 	//apply parameters
 	normalScaleDoubleSpinBox->setValue(normalScale);
@@ -381,6 +461,10 @@ void qM3C2Dialog::loadParamsFrom(const QSettings& settings)
 	exportDensityAtProjScaleCheckBox->setChecked(exportDensityAtProjScale);
 
 	maxThreadCountSpinBox->setValue(maxThreadCount);
+
+	precisionMapsGroupBox->setChecked(usePrecisionMaps);
+	pm1ScaleDoubleSpinBox->setValue(pm1Scale);
+	pm2ScaleDoubleSpinBox->setValue(pm2Scale);
 }
 
 void qM3C2Dialog::saveParamsToPersistentSettings()
@@ -392,37 +476,41 @@ void qM3C2Dialog::saveParamsToPersistentSettings()
 void qM3C2Dialog::saveParamsTo(QSettings& settings)
 {
 	//save parameters
-	settings.setValue("NormalScale",normalScaleDoubleSpinBox->value());
-	settings.setValue("NormalMode",static_cast<int>(getNormalsComputationMode()));
-	settings.setValue("NormalMinScale",minScaleDoubleSpinBox->value());
-	settings.setValue("NormalStep",stepScaleDoubleSpinBox->value());
-	settings.setValue("NormalMaxScale",maxScaleDoubleSpinBox->value());
-	settings.setValue("NormalUseCorePoints",normUseCorePointsCheckBox->isChecked());
-	settings.setValue("NormalPreferedOri",normOriPreferredComboBox->currentIndex());
+	settings.setValue("NormalScale", normalScaleDoubleSpinBox->value());
+	settings.setValue("NormalMode", static_cast<int>(getNormalsComputationMode()));
+	settings.setValue("NormalMinScale", minScaleDoubleSpinBox->value());
+	settings.setValue("NormalStep", stepScaleDoubleSpinBox->value());
+	settings.setValue("NormalMaxScale", maxScaleDoubleSpinBox->value());
+	settings.setValue("NormalUseCorePoints", normUseCorePointsCheckBox->isChecked());
+	settings.setValue("NormalPreferedOri", normOriPreferredComboBox->currentIndex());
 
-	settings.setValue("SearchScale",cylDiameterDoubleSpinBox->value());
-	settings.setValue("SearchDepth",cylHalfHeightDoubleSpinBox->value());
-	
-	settings.setValue("SubsampleRadius",cpSubsamplingDoubleSpinBox->value());
-	settings.setValue("SubsampleEnabled",cpSubsampleRadioButton->isChecked());
-	
-	settings.setValue("RegistrationError",rmsDoubleSpinBox->value());
-	settings.setValue("RegistrationErrorEnabled",rmsCheckBox->isChecked());
+	settings.setValue("SearchScale", cylDiameterDoubleSpinBox->value());
+	settings.setValue("SearchDepth", cylHalfHeightDoubleSpinBox->value());
 
-	settings.setValue("UseSinglePass4Depth",useSinglePass4DepthCheckBox->isChecked());
-	settings.setValue("PositiveSearchOnly",positiveSearchOnlyCheckBox->isChecked());
-	settings.setValue("UseMedian",useMedianCheckBox->isChecked());
-	
-	settings.setValue("UseMinPoints4Stat",useMinPoints4StatCheckBox->isChecked());
-	settings.setValue("MinPoints4Stat",minPoints4StatSpinBox->value());
+	settings.setValue("SubsampleRadius", cpSubsamplingDoubleSpinBox->value());
+	settings.setValue("SubsampleEnabled", cpSubsampleRadioButton->isChecked());
 
-	settings.setValue("ProjDestIndex",projDestComboBox->currentIndex());
-	settings.setValue("UseOriginalCloud",useOriginalCloudCheckBox->isChecked());
+	settings.setValue("RegistrationError", rmsDoubleSpinBox->value());
+	settings.setValue("RegistrationErrorEnabled", rmsCheckBox->isChecked());
 
-	settings.setValue("ExportStdDevInfo",exportStdDevInfoCheckBox->isChecked());
-	settings.setValue("ExportDensityAtProjScale",exportDensityAtProjScaleCheckBox->isChecked());
+	settings.setValue("UseSinglePass4Depth", useSinglePass4DepthCheckBox->isChecked());
+	settings.setValue("PositiveSearchOnly", positiveSearchOnlyCheckBox->isChecked());
+	settings.setValue("UseMedian", useMedianCheckBox->isChecked());
+
+	settings.setValue("UseMinPoints4Stat", useMinPoints4StatCheckBox->isChecked());
+	settings.setValue("MinPoints4Stat", minPoints4StatSpinBox->value());
+
+	settings.setValue("ProjDestIndex", projDestComboBox->currentIndex());
+	settings.setValue("UseOriginalCloud", useOriginalCloudCheckBox->isChecked());
+
+	settings.setValue("ExportStdDevInfo", exportStdDevInfoCheckBox->isChecked());
+	settings.setValue("ExportDensityAtProjScale", exportDensityAtProjScaleCheckBox->isChecked());
 
 	settings.setValue("MaxThreadCount", maxThreadCountSpinBox->value());
+
+	settings.setValue("UsePrecisionMaps", precisionMapsGroupBox->isChecked());
+	settings.setValue("PM1Scale", pm1ScaleDoubleSpinBox->value());
+	settings.setValue("PM2Scale", pm2ScaleDoubleSpinBox->value());
 }
 
 void qM3C2Dialog::loadParamsFromFile()

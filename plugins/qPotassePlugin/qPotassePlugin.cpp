@@ -1,6 +1,6 @@
 //##########################################################################
 //#                                                                        #
-//#                       CLOUDCOMPARE PLUGIN: qPotasse                      #
+//#                       CLOUDCOMPARE PLUGIN: qPotasse                    #
 //#                                                                        #
 //#  This program is free software; you can redistribute it and/or modify  #
 //#  it under the terms of the GNU General Public License as published by  #
@@ -28,12 +28,11 @@
 
 // CC
 #include <ReferenceCloud.h>
+#include <ccPlane.h>
 #include <ccPointCloud.h>
 #include <ccProgressDialog.h>
 
-// STL
-#include <iostream>  // TODO: delete
-#include <memory>
+#include <Eigen/Dense>
 
 // Default constructor: should mainly be used to initialize
 // actions (pointers) and other members
@@ -134,11 +133,33 @@ void qPotassePlugin::doAction() {
     // Shapes
     ////////////////////////////////////////////////////////////////////////////
 
+    std::vector<Cell> cells{};
     for (unsigned int i{0}; i < octree->getCellNumber(level); ++i) {
         CCLib::ReferenceCloud referenceCloud{pc};
         octree->getPointsInCellByCellIndex(&referenceCloud, i, level);
 
-#ifndef DEBUG
+        std::vector<Eigen::Vector3f> vertices, normals;
+        for (unsigned int i{0}, i_{referenceCloud.size()}; i < i_; ++i) {
+            unsigned int globalIndex{referenceCloud.getPointGlobalIndex(i)};
+
+            const CCVector3 *p{pc->getPoint(globalIndex)};
+            Eigen::Vector3f vertex{static_cast<float>(p->x),
+                                   static_cast<float>(p->y),
+                                   static_cast<float>(p->z)};
+            vertices.push_back(vertex);
+
+            const CCVector3 &n{pc->getPointNormal(globalIndex)};
+            Eigen::Vector3f normal{static_cast<float>(n.x),
+                                   static_cast<float>(n.y),
+                                   static_cast<float>(n.z)};
+            normals.push_back(normal);
+        }
+
+        Cell cell(i, level, .05, 10);
+        cell(referenceCloud, vertices, normals, true, true);
+        cells.push_back(cell);
+
+#ifndef NDEBUG
         m_app->dispToConsole(QString("[qPotassePlugin] Cell size : ") +
                                  QString::number(referenceCloud.size()),
                              ccMainAppInterface::STD_CONSOLE_MESSAGE);
@@ -155,6 +176,41 @@ void qPotassePlugin::doAction() {
     pc->setName("Potasse cloud");
     pc->setEnabled(true);
     group->addChild(pc);
+
+    for (auto cell : cells) {
+        typename Cell::PlanePtr planePtr{cell.planePtr()};
+        if (planePtr) {
+            group->addChild(cell.planePtr().get());
+        }
+
+#ifndef NDEBUG
+        if (planePtr) {
+            m_app->dispToConsole(
+                QString("[qPotassePlugin] Plane Center : ") +
+                    QString::number(
+                        static_cast<float>(planePtr->getCenter()[0])) +
+                    QString(" ,") +
+                    QString::number(
+                        static_cast<float>(planePtr->getCenter()[1])) +
+                    QString(" ,") +
+                    QString::number(
+                        static_cast<float>(planePtr->getCenter()[2])),
+                ccMainAppInterface::STD_CONSOLE_MESSAGE);
+
+            m_app->dispToConsole(
+                QString("[qPotassePlugin] Plane Normal : ") +
+                    QString::number(
+                        static_cast<float>(planePtr->getNormal()[0])) +
+                    QString(" ,") +
+                    QString::number(
+                        static_cast<float>(planePtr->getNormal()[1])) +
+                    QString(" ,") +
+                    QString::number(
+                        static_cast<float>(planePtr->getNormal()[2])),
+                ccMainAppInterface::STD_CONSOLE_MESSAGE);
+        }
+#endif
+    }
 
     m_app->addToDB(group);
 }

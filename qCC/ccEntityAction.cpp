@@ -33,6 +33,9 @@
 #include "ccFacet.h"
 #include "ccGenericPrimitive.h"
 #include "ccOctreeProxy.h"
+#include "ccPointCloud.h"
+#include "ccPolyline.h"
+#include "ccPointCloudInterpolator.h"
 
 //qCC_gl
 #include "ccGuiParameters.h"
@@ -49,6 +52,9 @@
 #include "ccScalarFieldArithmeticsDlg.h"
 #include "ccScalarFieldFromColorDlg.h"
 #include "ccStatisticalTestDlg.h"
+#include "ccOrderChoiceDlg.h"
+#include "ccItemSelectionDlg.h"
+#include "ccInterpolationDlg.h"
 
 #include "ccCommon.h"
 #include "ccConsole.h"
@@ -100,7 +106,7 @@ namespace ccEntityAction
 			if (ent->isA(CC_TYPES::HIERARCHY_OBJECT))
 			{
 				//automatically parse a group's children set
-				for (unsigned i=0; i<ent->getChildrenNumber(); ++i)
+				for (unsigned i = 0; i < ent->getChildrenNumber(); ++i)
 					selectedEntities.push_back(ent->getChild(i));
 			}
 			else if (ent->isA(CC_TYPES::POINT_CLOUD) || ent->isA(CC_TYPES::MESH))
@@ -133,9 +139,7 @@ namespace ccEntityAction
 				}
 				else
 				{
-					cloud->setRGBColor(	static_cast<ColorCompType>(colour.red()),
-										static_cast<ColorCompType>(colour.green()),
-										static_cast<ColorCompType>(colour.blue()) );
+					cloud->setRGBColor(	ccColor::FromQColor(colour) );
 				}
 				cloud->showColors(true);
 				cloud->showSF(false); //just in case
@@ -156,8 +160,8 @@ namespace ccEntityAction
 			{
 				ccGenericPrimitive* prim = ccHObjectCaster::ToPrimitive(ent);
 				ccColor::Rgb col(	static_cast<ColorCompType>(colour.red()),
-										static_cast<ColorCompType>(colour.green()),
-										static_cast<ColorCompType>(colour.blue()) );
+									static_cast<ColorCompType>(colour.green()),
+									static_cast<ColorCompType>(colour.blue()) );
 				prim->setColor(col);
 				ent->showColors(true);
 				ent->showSF(false); //just in case
@@ -166,10 +170,7 @@ namespace ccEntityAction
 			else if (ent->isA(CC_TYPES::POLY_LINE))
 			{
 				ccPolyline* poly = ccHObjectCaster::ToPolyline(ent);
-				ccColor::Rgb col(	static_cast<ColorCompType>(colour.red()),
-									static_cast<ColorCompType>(colour.green()),
-									static_cast<ColorCompType>(colour.blue()) );
-				poly->setColor(col);
+				poly->setColor(ccColor::FromQColor(colour));
 				ent->showColors(true);
 				ent->showSF(false); //just in case
 				ent->prepareDisplayForRefresh();
@@ -177,10 +178,7 @@ namespace ccEntityAction
 			else if (ent->isA(CC_TYPES::FACET))
 			{
 				ccFacet* facet = ccHObjectCaster::ToFacet(ent);
-				ccColor::Rgb col(	static_cast<ColorCompType>(colour.red()),
-									static_cast<ColorCompType>(colour.green()),
-									static_cast<ColorCompType>(colour.blue()) );
-				facet->setColor(col);
+				facet->setColor(ccColor::FromQColor(colour));
 				ent->showColors(true);
 				ent->showSF(false); //just in case
 				ent->prepareDisplayForRefresh();
@@ -310,6 +308,7 @@ namespace ccEntityAction
 		return true;
 	}
 	
+	//! Interpolate colors from on entity and transfer them to another one
 	bool	interpolateColors(const ccHObject::Container &selectedEntities, QWidget *parent)
 	{
 		if (selectedEntities.size() != 2)
@@ -357,22 +356,9 @@ namespace ccEntityAction
 			return false;
 		}
 		
-		bool ok = false;
-		unsigned char defaultLevel = 7;
-		int value = QInputDialog::getInt(	parent,
-											"Interpolate colors", "Octree level",
-											defaultLevel,
-											1, CCLib::DgmOctree::MAX_OCTREE_LEVEL,
-											1,
-											&ok);
-		if (!ok)
-			return false;
-		
-		defaultLevel = static_cast<unsigned char>(value);
-		
 		ccProgressDialog pDlg(true, parent);
 		
-		if (static_cast<ccPointCloud*>(dest)->interpolateColorsFrom(source, &pDlg, defaultLevel))
+		if (static_cast<ccPointCloud*>(dest)->interpolateColorsFrom(source, &pDlg))
 		{
 			ent2->showColors(true);
 			ent2->showSF(false); //just in case
@@ -383,6 +369,140 @@ namespace ccEntityAction
 		}
 		
 		ent2->prepareDisplayForRefresh_recursive();
+		
+		return true;
+	}
+
+	//! Interpolate scalar fields from on entity and transfer them to another one
+	bool	interpolateSFs(const ccHObject::Container &selectedEntities, ccMainAppInterface* app = 0)
+	{
+		if (selectedEntities.size() != 2)
+		{
+			ccConsole::Error("Select 2 entities (clouds or meshes)!");
+			return false;
+		}
+		
+		ccHObject* ent1 = selectedEntities[0];
+		ccHObject* ent2 = selectedEntities[1];
+		
+		ccPointCloud* cloud1 = ccHObjectCaster::ToPointCloud(ent1);
+		ccPointCloud* cloud2 = ccHObjectCaster::ToPointCloud(ent2);
+
+		if (!cloud1 || !cloud2)
+		{
+			ccConsole::Error("Select 2 entities (clouds or meshes)!");
+			return false;
+		}
+		
+		if (!cloud1->hasScalarFields() && !cloud2->hasScalarFields())
+		{
+			ccConsole::Error("None of the selected entities has per-point or per-vertex colors!");
+			return false;
+		}
+		else if (cloud1->hasScalarFields() && cloud2->hasScalarFields())
+		{
+			//ask the user to chose which will be the 'source' cloud
+			ccOrderChoiceDlg ocDlg(cloud1, "Source", cloud2, "Destination", app);
+			if (!ocDlg.exec())
+			{
+				//process cancelled by the user
+				return false;
+			}
+			if (cloud1 != ocDlg.getFirstEntity())
+			{
+				std::swap(cloud1, cloud2);
+			}
+		}
+		else if (cloud2->hasScalarFields())
+		{
+			std::swap(cloud1, cloud2);
+		}
+		
+		ccPointCloud* source = cloud1;
+		ccPointCloud* dest = cloud2;
+
+		//show the list of scalar fields available on the source point cloud
+		std::vector<int> sfIndexes;
+		try
+		{
+			unsigned sfCount = source->getNumberOfScalarFields();
+			if (sfCount == 1)
+			{
+				sfIndexes.push_back(0);
+			}
+			else if (sfCount > 1)
+			{
+				ccItemSelectionDlg isDlg(true, app->getMainWindow(), "entity");
+				QStringList scalarFields;
+				{
+					for (unsigned i = 0; i < sfCount; ++i)
+					{
+						scalarFields << source->getScalarFieldName(i);
+					}
+				}
+				isDlg.setItems(scalarFields, 0);
+				if (!isDlg.exec())
+				{
+					//cancelled by the user
+					return false;
+				}
+				isDlg.getSelectedIndexes(sfIndexes);
+				if (sfIndexes.empty())
+				{
+					ccConsole::Error("No scalar field was selected");
+					return false;
+				}
+			}
+			else
+			{
+				assert(false);
+			}
+		}
+		catch (const std::bad_alloc&)
+		{
+			ccConsole::Error("Not enough memory");
+			return false;
+		}
+
+		//semi-persistent parameters
+		static ccPointCloudInterpolator::Parameters::Method s_interpMethod = ccPointCloudInterpolator::Parameters::RADIUS;
+		static ccPointCloudInterpolator::Parameters::Algo s_interpAlgo = ccPointCloudInterpolator::Parameters::NORMAL_DIST;
+		static int s_interpKNN = 6;
+
+		ccInterpolationDlg iDlg(app->getMainWindow());
+		iDlg.setInterpolationMethod(s_interpMethod);
+		iDlg.setInterpolationAlgorithm(s_interpAlgo);
+		iDlg.knnSpinBox->setValue(s_interpKNN);
+		iDlg.radiusDoubleSpinBox->setValue(dest->getOwnBB().getDiagNormd() / 100);
+
+		if (!iDlg.exec())
+		{
+			//process cancelled by the user
+			return false;
+		}
+
+		//setup parameters
+		ccPointCloudInterpolator::Parameters params;
+		params.method = s_interpMethod = iDlg.getInterpolationMethod();
+		params.algo = s_interpAlgo = iDlg.getInterpolationAlgorithm();
+		params.knn = s_interpKNN = iDlg.knnSpinBox->value();
+		params.radius = iDlg.radiusDoubleSpinBox->value();
+		params.sigma = iDlg.kernelDoubleSpinBox->value();
+
+		ccProgressDialog pDlg(true, app->getMainWindow());
+		unsigned sfCountBefore = dest->getNumberOfScalarFields();
+
+		if (ccPointCloudInterpolator::InterpolateScalarFieldsFrom(dest, source, sfIndexes, params, &pDlg))
+		{
+			dest->setCurrentDisplayedScalarField(static_cast<int>(std::min(sfCountBefore + 1, dest->getNumberOfScalarFields())) - 1);
+			dest->showSF(true);
+		}
+		else
+		{
+			ccConsole::Error("An error occurred! (see console)");
+		}
+		
+		dest->prepareDisplayForRefresh_recursive();
 		
 		return true;
 	}
@@ -1144,7 +1264,7 @@ namespace ccEntityAction
 			{
 				if (sf && !sf->reserve(count))
 				{
-					ccLog::Warning(QString("[sfFromColor] Not enough memory to instantiate SF '%1' on cloud '%2'").arg(sf->getName()).arg(cloud->getName()));
+					ccLog::Warning(QString("[sfFromColor] Not enough memory to instantiate SF '%1' on cloud '%2'").arg(sf->getName(), cloud->getName()));
 					sf->release();
 					sf = nullptr;
 				}
@@ -1199,14 +1319,14 @@ namespace ccEntityAction
 				}
 				else
 				{
-					ccConsole::Warning(QString("[sfFromColor] Failed to add scalar field '%1' to cloud '%2'?!").arg(sf->getName()).arg(cloud->getName()));
+					ccConsole::Warning(QString("[sfFromColor] Failed to add scalar field '%1' to cloud '%2'?!").arg(sf->getName(), cloud->getName()));
 					sf->release();
 					sf = nullptr;
 				}
 			}
 			
 			if (!fieldsStr.isEmpty())
-				ccLog::Print(QString("[sfFromColor] New scalar fields (%1) added to '%2'").arg(fieldsStr).arg(cloud->getName()));
+				ccLog::Print(QString("[sfFromColor] New scalar fields (%1) added to '%2'").arg(fieldsStr, cloud->getName()));
 		}
 
 		return true;
@@ -1327,14 +1447,14 @@ namespace ccEntityAction
 			static CC_LOCAL_MODEL_TYPES s_lastModelType = LS;
 			static ccNormalVectors::Orientation s_lastNormalOrientation = ccNormalVectors::UNDEFINED;
 			static int s_lastMSTNeighborCount = 6;
-			static int s_lastKernelSize = 2;
+			static double s_lastMinGridAngle_deg = 1.0;
 			
 			ccNormalComputationDlg ncDlg(selectionMode, parent);
 			ncDlg.setLocalModel(s_lastModelType);
 			ncDlg.setRadius(defaultRadius);
 			ncDlg.setPreferredOrientation(s_lastNormalOrientation);
 			ncDlg.setMSTNeighborCount(s_lastMSTNeighborCount);
-			ncDlg.setGridKernelSize(s_lastKernelSize);
+			ncDlg.setMinGridAngle_deg(s_lastMinGridAngle_deg);
 			if (clouds.size() == 1)
 			{
 				ncDlg.setCloud(clouds.front());
@@ -1347,7 +1467,7 @@ namespace ccEntityAction
 			CC_LOCAL_MODEL_TYPES model = s_lastModelType = ncDlg.getLocalModel();
 			bool useGridStructure = cloudsWithScanGrids && ncDlg.useScanGridsForComputation();
 			defaultRadius = ncDlg.getRadius();
-			int kernelSize = s_lastKernelSize = ncDlg.getGridKernelSize();
+			double minGridAngle_deg = s_lastMinGridAngle_deg = ncDlg.getMinGridAngle_deg();
 			
 			//normals orientation
 			bool orientNormals = ncDlg.orientNormals();
@@ -1360,13 +1480,13 @@ namespace ccEntityAction
 			pDlg.setAutoClose(false);
 
 			size_t errors = 0;
-			for (size_t i=0; i<clouds.size(); i++)
+			for (size_t i = 0; i < clouds.size(); i++)
 			{
 				ccPointCloud* cloud = clouds[i];
 				Q_ASSERT(cloud != nullptr);
 				
 				bool result = false;
-				bool orientNormalsForThisCloud = false;
+				bool normalsAlreadyOriented = false;
 				if (useGridStructure && cloud->gridCount())
 				{
 #if 0
@@ -1383,9 +1503,9 @@ namespace ccEntityAction
 						ccGLMatrixd toSensor = scanGrid->sensorPosition.inverse();
 						
 						const int* _indexGrid = &(scanGrid->indexes[0]);
-						for (int j=0; j<static_cast<int>(scanGrid->h); ++j)
+						for (int j = 0; j < static_cast<int>(scanGrid->h); ++j)
 						{
-							for (int i=0; i<static_cast<int>(scanGrid->w); ++i, ++_indexGrid)
+							for (int i = 0; i < static_cast<int>(scanGrid->w); ++i, ++_indexGrid)
 							{
 								if (*_indexGrid >= 0)
 								{
@@ -1402,18 +1522,18 @@ namespace ccEntityAction
 #endif
 					
 					//compute normals with the associated scan grid(s)
-					orientNormalsForThisCloud = orientNormals && orientNormalsWithGrids;
-					result = cloud->computeNormalsWithGrids(model, kernelSize, orientNormalsForThisCloud, &pDlg);
+					normalsAlreadyOriented = true;
+					result = cloud->computeNormalsWithGrids(minGridAngle_deg, &pDlg);
 				}
 				else
 				{
 					//compute normals with the octree
-					orientNormalsForThisCloud = orientNormals && (preferredOrientation != ccNormalVectors::UNDEFINED);
+					normalsAlreadyOriented = orientNormals && (preferredOrientation != ccNormalVectors::UNDEFINED);
 					result = cloud->computeNormalsWithOctree(model, orientNormals ? preferredOrientation : ccNormalVectors::UNDEFINED, defaultRadius, &pDlg);
 				}
 				
 				//do we need to orient the normals? (this may have been already done if 'orientNormalsForThisCloud' is true)
-				if (result && orientNormals && !orientNormalsForThisCloud)
+				if (result && orientNormals && !normalsAlreadyOriented)
 				{
 					if (cloud->gridCount() && orientNormalsWithGrids)
 					{
@@ -1767,7 +1887,13 @@ namespace ccEntityAction
 			//specific test for locked vertices
 			bool lockedVertices = false;
 			ccGenericPointCloud* cloud = ccHObjectCaster::ToGenericPointCloud(ent, &lockedVertices);
-			if (cloud && lockedVertices)
+			
+			if (cloud == nullptr)
+			{
+			   continue;
+			}
+			
+			if (lockedVertices)
 			{
 				ccUtils::DisplayLockedVerticesWarning(ent->getName(), selectedEntities.size() == 1);
 				continue;
@@ -1891,6 +2017,11 @@ namespace ccEntityAction
 			if (property == CLEAR_PROPERTY::NORMALS && ( ent->isA(CC_TYPES::MESH) /*|| ent->isKindOf(CC_TYPES::PRIMITIVE)*/ )) //TODO
 			{
 				ccMesh* mesh = ccHObjectCaster::ToMesh(ent);
+				if (!mesh)
+				{
+					assert(false);
+					continue;
+				}
 				if (mesh->hasTriNormals())
 				{
 					mesh->showNormals(false);
@@ -2315,7 +2446,7 @@ namespace ccEntityAction
 			}
 			else
 			{
-				ccConsole::Warning(QString("[Entity: %1]-[SF: %2] Couldn't compute distribution parameters!").arg(pc->getName()).arg(pc->getScalarFieldName(outSfIdx)));
+				ccConsole::Warning(QString("[Entity: %1]-[SF: %2] Couldn't compute distribution parameters!").arg(pc->getName(),pc->getScalarFieldName(outSfIdx)));
 			}
 		}
 		

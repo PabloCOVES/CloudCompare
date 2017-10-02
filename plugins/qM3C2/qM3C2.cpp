@@ -41,6 +41,7 @@
 #include <QApplication>
 #include <QElapsedTimer>
 #include <QtConcurrentMap>
+#include <QMessageBox>
 
 //! Default name for M3C2 scalar fields
 static const char M3C2_DIST_SF_NAME[]			= "M3C2 distance";
@@ -95,45 +96,123 @@ void qM3C2Plugin::getActions(QActionGroup& group)
 static ScalarType SCALAR_ZERO = 0;
 static ScalarType SCALAR_ONE = 1;
 
-// Structure for parallel call to ComputeM3C2DistForPoint
-static struct
+// Precision maps (See "3D uncertainty-based topographic change detection with SfM photogrammetry: precision maps for ground control and directly georeferenced surveys" by James et al.)
+struct PrecisionMaps
 {
-	ccPointCloud* outputCloud;
-	ccPointCloud* corePoints;
-	NormsIndexesTableType* coreNormals;
+	PrecisionMaps() : sX(nullptr), sY(nullptr), sZ(nullptr), scale(1.0) {}
+	bool valid() const { return (sX != nullptr && sY != nullptr && sZ != nullptr); }
+	CCLib::ScalarField *sX, *sY, *sZ;
+	double scale;
+};
 
-	PointCoordinateType projectionRadius;
-	PointCoordinateType projectionDepth;
-	bool updateNormal;
-	bool exportNormal;
-	bool useMedian;
-	bool computeConfidence;
-	bool progressiveSearch;
-	bool onlyPositiveSearch;
-	unsigned minPoints4Stats;
-	double registrationRms;
+// Computes the uncertainty based on 'precision maps' (as scattered scalar fields)
+static double ComputePMUncertainty(CCLib::DgmOctree::NeighboursSet& set, const CCVector3& N, const PrecisionMaps& PM)
+{
+	size_t count = set.size();
+	if (count == 0)
+	{
+		assert(false);
+		return 0;
+	}
+	
+	int minIndex = -1;
+	if (count == 1)
+	{
+		minIndex = 0;
+	}
+	else
+	{
+		//compute gravity center
+		CCVector3d G(0, 0, 0);
+		for (size_t i = 0; i < count; ++i)
+		{
+			G.x += set[i].point->x;
+			G.y += set[i].point->y;
+			G.z += set[i].point->z;
+		}
+
+		G.x /= count;
+		G.y /= count;
+		G.z /= count;
+
+		//now look for the point that is the closest to the gravity center
+		double minSquareDist = -1.0;
+		minIndex = -1;
+		for (size_t i = 0; i < count; ++i)
+		{
+			CCVector3d dG(	G.x - set[i].point->x,
+							G.y - set[i].point->y,
+							G.z - set[i].point->z );
+			double squareDist = dG.norm2();
+			if (minIndex < 0 || squareDist < minSquareDist)
+			{
+				minSquareDist = squareDist;
+				minIndex = static_cast<int>(i);
+			}
+		}
+	}
+	
+	assert(minIndex >= 0);
+	unsigned pointIndex = set[minIndex].pointIndex;
+	CCVector3d sigma(	PM.sX->getValue(pointIndex) * PM.scale,
+						PM.sY->getValue(pointIndex) * PM.scale,
+						PM.sZ->getValue(pointIndex) * PM.scale);
+
+	CCVector3d NS(	N.x * sigma.x,
+					N.y * sigma.y,
+					N.z * sigma.z);
+	
+	return NS.norm();
+}
+
+// Structure for parallel call to ComputeM3C2DistForPoint
+struct M3C2Params
+{
+	//input data
+	ccPointCloud* outputCloud = nullptr;
+	ccPointCloud* corePoints = nullptr;
+	NormsIndexesTableType* coreNormals = nullptr;
+
+	//main options
+	PointCoordinateType projectionRadius = 0;
+	PointCoordinateType projectionDepth = 0;
+	bool updateNormal = false;
+	bool exportNormal = false;
+	bool useMedian = false;
+	bool computeConfidence = false;
+	bool progressiveSearch = false;
+	bool onlyPositiveSearch = false;
+	unsigned minPoints4Stats = 3;
+	double registrationRms = 0;
 
 	//export
 	qM3C2Dialog::ExportOptions exportOption;
-	bool keepOriginalCloud;
+	bool keepOriginalCloud = false;
 
+	//octrees
 	ccOctree::Shared cloud1Octree;
-	unsigned char level1;
+	unsigned char level1 = 0;
 	ccOctree::Shared cloud2Octree;
-	unsigned char level2;
+	unsigned char level2 = 0;
 
-	ccScalarField* m3c2DistSF;
-	ccScalarField* distUncertaintySF;
-	ccScalarField* sigChangeSF;
-	ccScalarField* stdDevCloud1SF;
-	ccScalarField* stdDevCloud2SF;
-	ccScalarField* densityCloud1SF;
-	ccScalarField* densityCloud2SF;
+	//scalar fields
+	ccScalarField* m3c2DistSF = nullptr;		//M3C2 distance
+	ccScalarField* distUncertaintySF = nullptr;	//distance uncertainty
+	ccScalarField* sigChangeSF = nullptr;		//significant change
+	ccScalarField* stdDevCloud1SF = nullptr;	//standard deviation information for cloud #1
+	ccScalarField* stdDevCloud2SF = nullptr;	//standard deviation information for cloud #2
+	ccScalarField* densityCloud1SF = nullptr;	//export point density at projection scale for cloud #1
+	ccScalarField* densityCloud2SF = nullptr;	//export point density at projection scale for cloud #2
 
-	CCLib::NormalizedProgress* nProgress;
-	bool processCanceled;
+	//precision maps
+	PrecisionMaps cloud1PM, cloud2PM;
+	bool usePrecisionMaps = false;
 
-} s_M3C2Params;
+	//progress notification
+	CCLib::NormalizedProgress* nProgress = nullptr;
+	bool processCanceled = false;
+};
+static M3C2Params s_M3C2Params;
 
 void ComputeM3C2DistForPoint(unsigned index)
 {
@@ -182,10 +261,10 @@ void ComputeM3C2DistForPoint(unsigned index)
 					//do we have enough points for computing stats?
 					if (neighbourCount >= s_M3C2Params.minPoints4Stats)
 					{
-						qM3C2Tools::ComputeStatistics(cn1.neighbours,s_M3C2Params.useMedian,mean1,stdDev1);
+						qM3C2Tools::ComputeStatistics(cn1.neighbours, s_M3C2Params.useMedian, mean1, stdDev1);
 						validStats1 = true;
 						//do we have a sharp enough 'mean' to stop?
-						if (fabs(mean1) + 2*stdDev1 < static_cast<double>(cn1.currentHalfLength))
+						if (fabs(mean1) + 2 * stdDev1 < static_cast<double>(cn1.currentHalfLength))
 							break;
 					}
 					previousNeighbourCount = neighbourCount;
@@ -204,6 +283,12 @@ void ComputeM3C2DistForPoint(unsigned index)
 			if (!validStats1)
 			{
 				qM3C2Tools::ComputeStatistics(cn1.neighbours, s_M3C2Params.useMedian, mean1, stdDev1);
+			}
+
+			if (s_M3C2Params.usePrecisionMaps && (s_M3C2Params.computeConfidence || s_M3C2Params.stdDevCloud1SF))
+			{
+				//compute the Precision Maps derived sigma
+				stdDev1 = ComputePMUncertainty(cn1.neighbours, N, s_M3C2Params.cloud1PM);
 			}
 
 			if (s_M3C2Params.exportOption == qM3C2Dialog::PROJECT_ON_CLOUD1)
@@ -258,10 +343,10 @@ void ComputeM3C2DistForPoint(unsigned index)
 						//do we have enough points for computing stats?
 						if (neighbourCount >= s_M3C2Params.minPoints4Stats)
 						{
-							qM3C2Tools::ComputeStatistics(cn2.neighbours,s_M3C2Params.useMedian,mean2,stdDev2);
+							qM3C2Tools::ComputeStatistics(cn2.neighbours, s_M3C2Params.useMedian, mean2, stdDev2);
 							validStats2 = true;
 							//do we have a sharp enough 'mean' to stop?
-							if (fabs(mean2) + 2*stdDev2 < static_cast<double>(cn2.currentHalfLength))
+							if (fabs(mean2) + 2 * stdDev2 < static_cast<double>(cn2.currentHalfLength))
 								break;
 						}
 						previousNeighbourCount = neighbourCount;
@@ -289,25 +374,36 @@ void ComputeM3C2DistForPoint(unsigned index)
 					outputP += static_cast<PointCoordinateType>(mean2) * N;
 				}
 
+				if (s_M3C2Params.usePrecisionMaps && (s_M3C2Params.computeConfidence || s_M3C2Params.stdDevCloud2SF))
+				{
+					//compute the Precision Maps derived sigma
+					stdDev2 = ComputePMUncertainty(cn2.neighbours, N, s_M3C2Params.cloud2PM);
+				}
+
 				if (n1 != 0)
 				{
 					//m3c2 dist = distance between i1 and i2 (i.e. either the mean or the median of both neighborhoods)
 					dist = static_cast<ScalarType>(mean2 - mean1);
-					s_M3C2Params.m3c2DistSF->setValue(index,dist);
+					s_M3C2Params.m3c2DistSF->setValue(index, dist);
 
 					//confidence interval
 					if (s_M3C2Params.computeConfidence)
 					{
-						//have we enough points for computing the confidence interval?
-						if (n1 >= s_M3C2Params.minPoints4Stats && n2 >= s_M3C2Params.minPoints4Stats)
+						ScalarType LODStdDev = NAN_VALUE;
+						if (s_M3C2Params.usePrecisionMaps)
+						{
+							LODStdDev = stdDev1*stdDev1 + stdDev2*stdDev2; //equation (2) in M3C2-PM article
+						}
+						//standard M3C2 algortihm: have we enough points for computing the confidence interval?
+						else if (n1 >= s_M3C2Params.minPoints4Stats && n2 >= s_M3C2Params.minPoints4Stats)
+						{
+							LODStdDev = (stdDev1*stdDev1) / n1 + (stdDev2*stdDev2) / n2;
+						}
+
+						if (!std::isnan(LODStdDev))
 						{
 							//distance uncertainty (see eq. (1) in M3C2 article)
-							ScalarType LOD = static_cast<ScalarType>( 1.96 * (	sqrt(	stdDev1*stdDev1/static_cast<double>(n1)  +
-																						stdDev2*stdDev2/static_cast<double>(n2)
-																					)
-																				+ s_M3C2Params.registrationRms
-																			)
-																	);
+							ScalarType LOD = static_cast<ScalarType>(1.96 * (sqrt(LODStdDev) + s_M3C2Params.registrationRms));
 
 							if (s_M3C2Params.distUncertaintySF)
 							{
@@ -318,15 +414,17 @@ void ComputeM3C2DistForPoint(unsigned index)
 							{
 								bool significant = (dist < -LOD || dist > LOD);
 								if (significant)
+								{
 									s_M3C2Params.sigChangeSF->setValue(index, SCALAR_ONE); //already equal to SCALAR_ZERO otherwise
+								}
 							}
 						}
 						//else //DGM: scalar fields have already been initialized with the right 'default' values
 						//{
 						//	if (distUncertaintySF)
-						//		distUncertaintySF->setValue(index,NAN_VALUE);
+						//		distUncertaintySF->setValue(index, NAN_VALUE);
 						//	if (sigChangeSF)
-						//		sigChangeSF->setValue(index,SCALAR_ZERO);
+						//		sigChangeSF->setValue(index, SCALAR_ZERO);
 						//}
 					}
 				}
@@ -380,7 +478,7 @@ void qM3C2Plugin::doAction()
 		||	!m_selectedEntities[0]->isA(CC_TYPES::POINT_CLOUD)
 		||	!m_selectedEntities[1]->isA(CC_TYPES::POINT_CLOUD))
 	{
-		m_app->dispToConsole("Select two point clouds!",ccMainAppInterface::ERR_CONSOLE_MESSAGE);
+		m_app->dispToConsole("Select two point clouds!", ccMainAppInterface::ERR_CONSOLE_MESSAGE);
 		return;
 	}
 
@@ -389,9 +487,11 @@ void qM3C2Plugin::doAction()
 
 	//display dialog
 	qM3C2Dialog dlg(cloud1, cloud2, m_app);
-
 	if (!dlg.exec())
+	{
+		//process cancelled by the user
 		return;
+	}
 	dlg.saveParamsToPersistentSettings();
 
 	//get the clouds in the right order
@@ -400,13 +500,13 @@ void qM3C2Plugin::doAction()
 
 	//normals computation parameters
 	double normalScale = dlg.normalScaleDoubleSpinBox->value();
-	bool useCloud1Normals = dlg.useCloud1NormalsCheckBox->isChecked() && dlg.useCloud1NormalsCheckBox->isEnabled();
 	double projectionScale = dlg.cylDiameterDoubleSpinBox->value();
 	qM3C2Normals::ComputationMode normMode = dlg.getNormalsComputationMode();
 	double samplingDist = dlg.cpSubsamplingDoubleSpinBox->value();
 	ccScalarField* normalScaleSF = 0; //normal scale (multi-scale mode only)
 
 	//other parameters are stored in 's_M3C2Params' for parallel call
+	s_M3C2Params = M3C2Params();
 	s_M3C2Params.projectionRadius = static_cast<PointCoordinateType>(projectionScale/2); //we want the radius in fact ;)
 	s_M3C2Params.projectionDepth = static_cast<PointCoordinateType>(dlg.cylHalfHeightDoubleSpinBox->value());
 	s_M3C2Params.corePoints = dlg.getCorePointsCloud();
@@ -417,27 +517,40 @@ void qM3C2Plugin::doAction()
 	s_M3C2Params.minPoints4Stats = dlg.getMinPointsForStats();
 	s_M3C2Params.progressiveSearch = !dlg.useSinglePass4DepthCheckBox->isChecked();
 	s_M3C2Params.onlyPositiveSearch = dlg.positiveSearchOnlyCheckBox->isChecked();
-	//scalar fields
-	s_M3C2Params.m3c2DistSF = 0;			//M3C2 distance
-	s_M3C2Params.distUncertaintySF = 0;		//distance uncertainty
-	s_M3C2Params.sigChangeSF = 0;			//significant change
-	s_M3C2Params.stdDevCloud1SF = 0;		//standard deviation information for cloud #1
-	s_M3C2Params.stdDevCloud2SF = 0;		//standard deviation information for cloud #2
-	s_M3C2Params.densityCloud1SF = 0;		//export point density at projection scale for cloud #1
-	s_M3C2Params.densityCloud2SF = 0;		//export point density at projection scale for cloud #2
-	//octrees
-	s_M3C2Params.cloud1Octree.clear();
-	s_M3C2Params.level1 = 0;
-	s_M3C2Params.cloud2Octree.clear();
-	s_M3C2Params.level2 = 0;
-	//other
-	s_M3C2Params.outputCloud = 0;
-	s_M3C2Params.coreNormals = 0;
-	s_M3C2Params.updateNormal = false;
-	s_M3C2Params.exportNormal = false;
-	s_M3C2Params.computeConfidence = false;
-	s_M3C2Params.nProgress = 0;
-	s_M3C2Params.processCanceled = false;
+
+	//precision maps
+	{
+		s_M3C2Params.usePrecisionMaps = dlg.precisionMapsGroupBox->isEnabled() && dlg.precisionMapsGroupBox->isChecked();
+		if (s_M3C2Params.usePrecisionMaps)
+		{
+			if (QMessageBox::question(m_app->getMainWindow(), "Precision Maps", "Are you sure you want to compute the M3C2 distances with precision maps?", QMessageBox::Yes, QMessageBox::No) == QMessageBox::No)
+			{
+				s_M3C2Params.usePrecisionMaps = false;
+				dlg.precisionMapsGroupBox->setChecked(false);
+				dlg.saveParamsToPersistentSettings();
+
+			}
+		}
+		if (s_M3C2Params.usePrecisionMaps)
+		{
+			s_M3C2Params.cloud1PM.sX = cloud1->getScalarField(dlg.c1SxComboBox->currentIndex());
+			s_M3C2Params.cloud1PM.sY = cloud1->getScalarField(dlg.c1SyComboBox->currentIndex());
+			s_M3C2Params.cloud1PM.sZ = cloud1->getScalarField(dlg.c1SzComboBox->currentIndex());
+			s_M3C2Params.cloud1PM.scale = dlg.pm1ScaleDoubleSpinBox->value();
+
+			s_M3C2Params.cloud2PM.sX = cloud2->getScalarField(dlg.c2SxComboBox->currentIndex());
+			s_M3C2Params.cloud2PM.sY = cloud2->getScalarField(dlg.c2SyComboBox->currentIndex());
+			s_M3C2Params.cloud2PM.sZ = cloud2->getScalarField(dlg.c2SzComboBox->currentIndex());
+			s_M3C2Params.cloud2PM.scale = dlg.pm2ScaleDoubleSpinBox->value();
+
+			if (!s_M3C2Params.cloud1PM.valid() || !s_M3C2Params.cloud2PM.valid())
+			{
+				m_app->dispToConsole("Invalid 'Precision maps' settings!", ccMainAppInterface::ERR_CONSOLE_MESSAGE);
+				return;
+			}
+		}
+	}
+
 
 	//max thread count
 	int maxThreadCount = dlg.getMaxThreadCount();
@@ -520,7 +633,7 @@ void qM3C2Plugin::doAction()
 	}
 
 	//output
-	QString outputName("M3C2 output");
+	QString outputName(s_M3C2Params.usePrecisionMaps ? "M3C2-PM output" : "M3C2 output");
 	
 	if (!error)
 	{
@@ -753,8 +866,18 @@ void qM3C2Plugin::doAction()
 
 		if (dlg.exportStdDevInfoCheckBox->isChecked())
 		{
+			QString prefix("STD");
+			if (s_M3C2Params.usePrecisionMaps)
+			{
+				prefix = "SigmaN";
+			}
+			else if (s_M3C2Params.useMedian)
+			{
+				prefix = "IQR";
+			}
 			//allocate cloud #1 std. dev. SF
-			s_M3C2Params.stdDevCloud1SF = new ccScalarField(qPrintable(QString(STD_DEV_CLOUD1_SF_NAME).arg(s_M3C2Params.useMedian ? "IQR" : "STD")));
+			QString stdDevSFName1 = QString(STD_DEV_CLOUD1_SF_NAME).arg(prefix);
+			s_M3C2Params.stdDevCloud1SF = new ccScalarField(qPrintable(stdDevSFName1));
 			s_M3C2Params.stdDevCloud1SF->link();
 			if (!s_M3C2Params.stdDevCloud1SF->resize(corePointCount, true, NAN_VALUE))
 			{
@@ -763,7 +886,8 @@ void qM3C2Plugin::doAction()
 				s_M3C2Params.stdDevCloud1SF = 0;
 			}
 			//allocate cloud #2 std. dev. SF
-			s_M3C2Params.stdDevCloud2SF = new ccScalarField(qPrintable(QString(STD_DEV_CLOUD2_SF_NAME).arg(s_M3C2Params.useMedian ? "IQR" : "STD")));
+			QString stdDevSFName2 = QString(STD_DEV_CLOUD2_SF_NAME).arg(prefix);
+			s_M3C2Params.stdDevCloud2SF = new ccScalarField(qPrintable(stdDevSFName2));
 			s_M3C2Params.stdDevCloud2SF->link();
 			if (!s_M3C2Params.stdDevCloud2SF->resize(corePointCount, true, NAN_VALUE))
 			{
@@ -797,10 +921,10 @@ void qM3C2Plugin::doAction()
 		//get best levels for neighbourhood extraction on both octrees
 		assert(s_M3C2Params.cloud1Octree && s_M3C2Params.cloud2Octree);
 
-		s_M3C2Params.level1 = s_M3C2Params.cloud1Octree->findBestLevelForAGivenNeighbourhoodSizeExtraction(static_cast<PointCoordinateType>(2.5)*s_M3C2Params.projectionRadius); //2.5 = empirical!
+		s_M3C2Params.level1 = s_M3C2Params.cloud1Octree->findBestLevelForAGivenNeighbourhoodSizeExtraction(static_cast<PointCoordinateType>(2.5 * s_M3C2Params.projectionRadius)); //2.5 = empirical!
 		m_app->dispToConsole(QString("[M3C2] Working subdivision level (cloud #1): %1").arg(s_M3C2Params.level1), ccMainAppInterface::STD_CONSOLE_MESSAGE);
 
-		s_M3C2Params.level2 = s_M3C2Params.cloud2Octree->findBestLevelForAGivenNeighbourhoodSizeExtraction(static_cast<PointCoordinateType>(2.5)*s_M3C2Params.projectionRadius); //2.5 = empirical!
+		s_M3C2Params.level2 = s_M3C2Params.cloud2Octree->findBestLevelForAGivenNeighbourhoodSizeExtraction(static_cast<PointCoordinateType>(2.5 * s_M3C2Params.projectionRadius)); //2.5 = empirical!
 		m_app->dispToConsole(QString("[M3C2] Working subdivision level (cloud #2): %1").arg(s_M3C2Params.level2), ccMainAppInterface::STD_CONSOLE_MESSAGE);
 
 		//other options

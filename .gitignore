@@ -126,6 +126,12 @@ pip-log.txt
 .DS_Store
 /build_64bits_msvc10/
 /test/
+<<<<<<< HEAD
 Session.vim
 compile_commands.json
 install.sh
+=======
+private_plugins
+/data/
+/misc/
+>>>>>>> upstream/master

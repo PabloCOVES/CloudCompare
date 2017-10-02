@@ -498,12 +498,12 @@ static double Median(const CCLib::DgmOctree::NeighboursSet& set, size_t begin = 
 			return NAN_VALUE;
 	}
 
-	size_t nd2 = count/2;
-	double midValue = set[begin+nd2].squareDistd;
-	
+	size_t nd2 = count / 2;
+	double midValue = set[begin + nd2].squareDistd;
+
 	if ((count & 1) == 0) //even case
-	{ 
-		midValue = (midValue + set[begin+nd2-1].squareDistd) / 2;
+	{
+		midValue = (midValue + set[begin + nd2 - 1].squareDistd) / 2;
 	}
 
 	return midValue;
@@ -561,12 +561,12 @@ void qM3C2Tools::ComputeStatistics(CCLib::DgmOctree::NeighboursSet& set, bool us
 		{
 			const ScalarType& dist = set[i].squareDistd;
 			sum += static_cast<double>(dist); //should be the projected dist in fact!
-			sum2 += static_cast<double>(dist*dist);
+			sum2 += static_cast<double>(dist) * dist;
 		}
 
 		assert(count > 1);
-		sum /= static_cast<double>(count);
-		sum2 = sqrt(fabs(sum2 / static_cast<double>(count)-sum*sum));
+		sum /= count;
+		sum2 = sqrt(fabs(sum2 / count - sum*sum));
 
 		meanOrMedian = static_cast<ScalarType>(sum);
 		stdDevOrIQR = static_cast<ScalarType>(sum2);

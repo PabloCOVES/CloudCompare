@@ -157,6 +157,13 @@ public: //features deletion/clearing
 	//! Erases the cloud normals
 	void unallocateNorms();
 
+	//! Notify a modification of color / scalar field display parameters or contents
+	inline void colorsHaveChanged() { m_vboManager.updateFlags |= vboSet::UPDATE_COLORS; }
+	//! Notify a modification of normals display parameters or contents
+	inline void normalsHaveChanged() { m_vboManager.updateFlags |= vboSet::UPDATE_NORMALS; }
+	//! Notify a modification of points display parameters or contents
+	inline void pointsHaveChanged() { m_vboManager.updateFlags |= vboSet::UPDATE_POINTS; }
+
 public: //features allocation/resize
 
 	//! Reserves memory to store the points coordinates
@@ -347,9 +354,7 @@ public: //normals computation/orientation
 	//! Compute the normals with the associated grid structure(s)
 	/** Can also orient the normals in the same run.
 	**/
-	bool computeNormalsWithGrids(	CC_LOCAL_MODEL_TYPES localModel,
-									int kernelWidth,
-									bool orientNormals = true,
+	bool computeNormalsWithGrids(	double minTriangleAngle_deg = 1.0,
 									ccProgressDialog* pDlg = 0 );
 
 	//! Orient the normals with the associated grid structure(s)
@@ -463,10 +468,18 @@ public: //other methods
 	//! Returns whether the mesh as an associated sensor or not
 	bool hasSensor() const;
 
-	//! Interpolate colors from another cloud
+	//! Comptes the closest point of this cloud relatively to another cloud
+	/** The output (reference) clouds will have as many points as this cloud
+		(with the indexes pointing on the closest point in the other cloud)
+	**/
+	QSharedPointer<CCLib::ReferenceCloud> computeCPSet(	ccGenericPointCloud& otherCloud,
+														CCLib::GenericProgressCallback* progressCb = NULL,
+														unsigned char octreeLevel = 0);
+
+	//! Interpolate colors from another cloud (nearest neighbor only)
 	bool interpolateColorsFrom(	ccGenericPointCloud* cloud,
 								CCLib::GenericProgressCallback* progressCb = NULL,
-								unsigned char octreeLevel = 7);
+								unsigned char octreeLevel = 0);
 
 	//! Sets a particular point color
 	/** WARNING: colors must be enabled.
