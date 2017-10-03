@@ -42,18 +42,18 @@ Cell::PlanePtr detectPlane(CCLib::ReferenceCloud const &referenceCloud) {
     Eigen::Vector3f normal{
         Eigen::SelfAdjointEigenSolver<Matrix>(matrix).eigenvectors().col(0)};
 
-    Eigen::Quaternionf rotation{
-        Eigen::Quaternionf::FromTwoVectors(Vector::UnitZ(), normal)};
+    using Transform = Eigen::Transform<float, 3, Eigen::Affine>;
+    Transform transform{Transform::Identity()};
 
-    Eigen::Transform<float, 3, Eigen::Affine> transform{
-        rotation.toRotationMatrix()};
-    transform.translate(centroid);
+    transform.translation() = centroid;
+    transform.linear() =
+        Eigen::Quaternionf::FromTwoVectors(Vector::UnitZ(), normal)
+            .toRotationMatrix();
 
-    ccGLMatrix glMatrix;
-    for (unsigned int i{0}; i < 16; ++i)
-        glMatrix.data()[i] = transform.data()[i];
+    ccGLMatrix glMatrix{transform.matrix().data()};
 
-    return std::make_shared<ccPlane>(1, 1, &glMatrix);
+    ccPlane *output{new ccPlane(8, 8, &glMatrix)};
+    return output;
 }
 
 typename Eigen::Vector3f mostOrthogonalVectorToNVectors(
@@ -143,15 +143,20 @@ Cell::CylinderPtr detectCylinder(CCLib::ReferenceCloud const &referenceCloud,
     Eigen::Quaternionf rotation{
         Eigen::Quaternionf::FromTwoVectors(Vector::UnitZ(), axis)};
 
-    Eigen::Transform<float, 3, Eigen::Affine> transform{
-        rotation.toRotationMatrix()};
-    transform.translate(point);
+    using Transform = Eigen::Transform<float, 3, Eigen::Affine>;
+    Transform transform{Transform::Identity()};
+
+    transform.translation() = point;
+    transform.linear() =
+        Eigen::Quaternionf::FromTwoVectors(Vector::UnitZ(), axis)
+            .toRotationMatrix();
 
     ccGLMatrix glMatrix;
     for (unsigned int i{0}; i < 16; ++i)
         glMatrix.data()[i] = transform.data()[i];
 
-    return std::make_shared<ccCylinder>(radius, length, &glMatrix);
+    ccCylinder *output{new ccCylinder(radius, 8, &glMatrix)};
+    return output;
 }
 
 Cell::Cell(unsigned int index, unsigned int level, float maxDist,

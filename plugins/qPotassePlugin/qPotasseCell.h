@@ -1,7 +1,6 @@
 #ifndef _CELL_H_
 #define _CELL_H_
 
-#include <memory>
 #include <vector>
 
 #include <Eigen/Dense>
@@ -15,11 +14,11 @@ class ccCylinder;
 
 class Cell {
    public:
-    typedef std::shared_ptr<ccPlane> PlanePtr;
-    typedef std::shared_ptr<ccPlane const> PlaneConstPtr;
+    typedef ccPlane *PlanePtr;
+    typedef const ccPlane *PlaneConstPtr;
 
-    typedef std::shared_ptr<ccCylinder> CylinderPtr;
-    typedef std::shared_ptr<ccCylinder const> CylinderConstPtr;
+    typedef ccCylinder *CylinderPtr;
+    typedef const ccCylinder *CylinderConstPtr;
 
    public:
     explicit Cell(unsigned int index, unsigned int level_, float maxDist,

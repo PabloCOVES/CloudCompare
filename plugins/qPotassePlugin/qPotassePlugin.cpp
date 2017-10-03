@@ -28,11 +28,13 @@
 
 // CC
 #include <ReferenceCloud.h>
+#include <ccCylinder.h>
 #include <ccPlane.h>
 #include <ccPointCloud.h>
 #include <ccProgressDialog.h>
 
 #include <Eigen/Dense>
+#include <iostream>
 
 // Default constructor: should mainly be used to initialize
 // actions (pointers) and other members
@@ -142,6 +144,9 @@ void qPotassePlugin::doAction() {
         for (unsigned int i{0}, i_{referenceCloud.size()}; i < i_; ++i) {
             unsigned int globalIndex{referenceCloud.getPointGlobalIndex(i)};
 
+            std::cout << "Index : " << i << std::endl
+                      << "Global : " << globalIndex << std::endl;
+
             const CCVector3 *p{pc->getPoint(globalIndex)};
             Eigen::Vector3f vertex{static_cast<float>(p->x),
                                    static_cast<float>(p->y),
@@ -180,7 +185,13 @@ void qPotassePlugin::doAction() {
     for (auto cell : cells) {
         typename Cell::PlanePtr planePtr{cell.planePtr()};
         if (planePtr) {
-            group->addChild(cell.planePtr().get());
+            cell.planePtr()->setVisible(false);
+            group->addChild(cell.planePtr());
+        }
+
+        if (cell.cylinderPtr()) {
+            cell.planePtr()->setVisible(true);
+            group->addChild(cell.cylinderPtr());
         }
 
 #ifndef NDEBUG
